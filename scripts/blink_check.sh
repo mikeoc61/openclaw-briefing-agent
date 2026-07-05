@@ -34,6 +34,7 @@ for cam in "${CAMERAS[@]}"; do
   battery=$(get_state "binary_sensor.${cam}_battery")
   temp=$(get_state "sensor.blink_${cam}_temperature")
   rssi=$(get_state "sensor.blink_${cam}_wi_fi_signal_strength")
+#  echo $cam ':' $battery $temp $rssi
 
   issues=()
   if [[ "$battery" == "on" ]];          then issues+=("low battery"); fi
@@ -57,4 +58,6 @@ done
 if [[ ${#ALERTS[@]} -gt 0 ]]; then
   echo "⚠ Blink cameras:"
   for alert in "${ALERTS[@]}"; do echo "  - $alert"; done
+else
+  echo "No Battery, Temp or Signal Strength issues"
 fi
