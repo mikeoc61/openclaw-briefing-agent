@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+
+# Personal — contains PII, never commit to the public repo
+USER.md
+memory/
+briefing.env
+state/
+.openclaw/
+openclaw-workspace-state.json
+*.token
