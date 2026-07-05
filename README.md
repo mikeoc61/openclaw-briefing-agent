@@ -89,7 +89,7 @@ cp briefing.env.example ~/.openclaw/briefing.env
 chmod 600 ~/.openclaw/briefing.env
 ```
 
-The file is `source`d by `briefing_parent.sh` (values with spaces **must be
+The file is sourced by `briefing_parent.sh` (values with spaces **must be
 double-quoted**) and read by Python collectors via `scripts/local_config.py`
 (env vars take precedence over the file). The parent script hard-fails with a
 clear error if the file is missing.
