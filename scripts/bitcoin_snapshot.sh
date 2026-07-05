@@ -5,6 +5,9 @@ set -euo pipefail
 BCLI="bitcoin-cli"
 WINDOW=1008
 
+# Fail soft: silence is ambiguous with "collector died" — always emit a line.
+trap 'echo "=== BITCOIN NETWORK SNAPSHOT ==="; echo "Hash rate/difficulty: unavailable (bitcoin-cli error)"; exit 0' ERR
+
 tip=$($BCLI getblockcount)
 hr_now=$($BCLI getnetworkhashps "$WINDOW")
 hr_old=$($BCLI getnetworkhashps "$WINDOW" $((tip - WINDOW)))

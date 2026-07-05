@@ -19,22 +19,33 @@ if [[ -r "$HA_URL_FILE" ]]; then
   HA_URL="$(tr -d '\r\n' < "$HA_URL_FILE")"
 fi
 
+# Entity prefix is site-specific (HA derives it from the Powerwall site name)
+# — configured in ~/.openclaw/briefing.env, not hardcoded.
+BRIEFING_ENV="${HOME}/.openclaw/briefing.env"
+if [[ -z "${HA_POWERWALL_PREFIX:-}" && -r "$BRIEFING_ENV" ]]; then
+  HA_POWERWALL_PREFIX="$(grep -E '^HA_POWERWALL_PREFIX=' "$BRIEFING_ENV" | tail -1 | cut -d= -f2- | tr -d '"'"'"'')"
+fi
+if [[ -z "${HA_POWERWALL_PREFIX:-}" ]]; then
+  echo "Powerwall: unavailable (HA_POWERWALL_PREFIX not set in $BRIEFING_ENV)"
+  exit 0
+fi
+
 get_state() {
   local entity_id="$1"
   curl -fsS \
     -H "Authorization: Bearer ${HA_TOKEN}" \
     -H "Content-Type: application/json" \
     "${HA_URL}/api/states/${entity_id}" \
-    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['state'])"
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['state'])" 2>/dev/null || echo "unavailable"
 }
 
-charge="$(get_state sensor.hale_oconnor_charge)"
-backup_reserve="$(get_state sensor.hale_oconnor_backup_reserve)"
-load_power="$(get_state sensor.hale_oconnor_load_power)"
-battery_power="$(get_state sensor.hale_oconnor_battery_power)"
-grid_status="$(get_state binary_sensor.hale_oconnor_grid_status)"
-off_grid="$(get_state switch.hale_oconnor_off_grid_operation)"
-site_power="$(get_state sensor.hale_oconnor_site_power)"
+charge="$(get_state "sensor.${HA_POWERWALL_PREFIX}_charge")"
+backup_reserve="$(get_state "sensor.${HA_POWERWALL_PREFIX}_backup_reserve")"
+load_power="$(get_state "sensor.${HA_POWERWALL_PREFIX}_load_power")"
+battery_power="$(get_state "sensor.${HA_POWERWALL_PREFIX}_battery_power")"
+grid_status="$(get_state "binary_sensor.${HA_POWERWALL_PREFIX}_grid_status")"
+off_grid="$(get_state "switch.${HA_POWERWALL_PREFIX}_off_grid_operation")"
+site_power="$(get_state "sensor.${HA_POWERWALL_PREFIX}_site_power")"
 
 python3 - "$charge" "$backup_reserve" "$load_power" "$battery_power" "$grid_status" "$off_grid" "$site_power" <<'PY'
 import sys
