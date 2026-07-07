@@ -66,8 +66,40 @@ if cpu_temp:
     except:
         pass
 disk_match = re.search(r'/dev/\S+\s+\S+\s+\S+\s+(\S+)\s+(\d+)%', health)
-mem_line = extract_first(r'Mem:\s+(\S+)\s+(\S+)', health)
 uptime_line = extract_first(r'up\s+(.+?),\s+\d+\s+users', health)
+
+
+def _to_bytes(s):
+    """Parse free(1) values: plain bytes ('8189595648') or humanized ('7.6Gi', '918Mi', '0B')."""
+    m = re.match(r'^([0-9.]+)\s*([KMGTP]?)', s.strip(), re.I)
+    if not m:
+        return None
+    mult = {'': 1, 'K': 1024, 'M': 1024**2, 'G': 1024**3, 'T': 1024**4, 'P': 1024**5}
+    return float(m.group(1)) * mult[m.group(2).upper()]
+
+
+def _fmt_gb(b):
+    return f"{b / 1024**3:.1f}G"
+
+
+# Memory pressure: 'available' (col 7 of free) is the kernel's estimate of
+# memory allocatable without swapping — reclaimable cache counts as free.
+# Effective usage = total - available. Total alone says nothing about health.
+mem_line = ""
+_mem = re.search(r'Mem:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', health)
+if _mem:
+    _total, _avail = _to_bytes(_mem.group(1)), _to_bytes(_mem.group(6))
+    if _total and _avail is not None:
+        _eff_used = _total - _avail
+        _pct = _eff_used / _total * 100
+        mem_line = f"{_fmt_gb(_avail)} avail / {_fmt_gb(_total)} ({_pct:.0f}% used)"
+        if _pct >= 85:
+            mem_line += " ⚠ high pressure"
+_swap = re.search(r'Swap:\s+(\S+)\s+(\S+)', health)
+if _swap and mem_line:
+    _swap_used = _to_bytes(_swap.group(2))
+    if _swap_used and _swap_used > 64 * 1024**2:  # ignore trivial residue
+        mem_line += f", swap {_fmt_gb(_swap_used)} in use ⚠"
 
 disk_free = disk_used = ""
 if disk_match:
