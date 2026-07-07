@@ -70,3 +70,10 @@ git diff --cached --quiet || (git commit -m "briefing sync $(date +%Y-%m-%d): up
 - Keep all of the above out of mirror and out of git
 - Briefing scripts must read secrets/PII from these files only — never hardcode
 - `USER.md` and `memory/` are gitignored (personal content)
+
+## Collectors
+- **Farside ETF flows:** collector script renamed `farside_btc.py` → `farside_flows.py`
+  (called by the morning briefing parent). Now multi-asset: accepts `btc`, `eth`,
+  and `sol` as arguments. Cache output filename unchanged: still writes
+  `~/.openclaw/cache/farside_btc.json`, read by `scripts/compose_briefing.py`
+  (~L394). Brief stays BTC-only for now — no compose_briefing.py change needed.
