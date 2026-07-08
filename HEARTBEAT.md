@@ -7,7 +7,6 @@ After each successful briefing run, sync relevant files to the main workspace mi
 1. Sync files to mirror:
 ```bash
    rsync -av --delete \
-     ~/.openclaw/workspace-briefing/scripts \
      ~/.openclaw/workspace-briefing/*.md \
      ~/.openclaw/workspace/briefing/
 ```

@@ -49,7 +49,6 @@ Skills are shared. Your setup is yours. Keeping them apart means you can update 
 ```bash
 # Step 1 — rsync source into mirror
 rsync -av --delete \
-  ~/.openclaw/workspace-briefing/scripts \
   ~/.openclaw/workspace-briefing/*.md \
   ~/.openclaw/workspace/briefing/
 
