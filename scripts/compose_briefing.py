@@ -608,8 +608,8 @@ def llm_analyst_take():
     if etf_flows_line:
         ctx_lines.append(etf_flows_line)
         _div = (
-            etf_flows_summary.get('window_ibit') is not None
-            and etf_flows_summary['window_ibit'] > 0
+            etf_flows_summary.get('window_lead') is not None
+            and etf_flows_summary['window_lead'] > 0
             and btc_price_num is not None
             and btc_sma_num is not None
             and btc_price_num < btc_sma_num
