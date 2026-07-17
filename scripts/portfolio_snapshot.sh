@@ -10,9 +10,9 @@ python3 - <<'PY'
 import json, urllib.request, math, time
 
 PORTFOLIO = {
-    "Core (High Conviction)": ["COIN", "CRCL", "PLTR"],
-    "Secondary (Thematic Leverage)": ["IREN", "HUT"],
-    "Optionality": ["RKLB", "QTUM"],
+    "Core (High Conviction)": ["ANET", "COIN", "CRCL", "PLTR"],
+    "Secondary (Thematic Leverage)": ["SOXX", "HUT"],
+    "Optionality": ["RKLB"],
 }
 
 ALL_TICKERS = [t for tickers in PORTFOLIO.values() for t in tickers]
