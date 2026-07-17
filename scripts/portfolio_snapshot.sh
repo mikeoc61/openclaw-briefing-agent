@@ -10,8 +10,8 @@ python3 - <<'PY'
 import json, urllib.request, math, time
 
 PORTFOLIO = {
-    "Core (High Conviction)": ["ANET", "COIN", "CRCL", "PLTR"],
-    "Secondary (Thematic Leverage)": ["SOXX", "HUT"],
+    "Core (High Conviction)": ["COIN", "CRCL", "PLTR"],
+    "Secondary (Thematic Leverage)": ["ANET", "SOXX", "HUT"],
     "Optionality": ["RKLB"],
 }
 
