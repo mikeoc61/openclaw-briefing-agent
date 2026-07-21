@@ -607,6 +607,14 @@ def llm_analyst_take():
         ctx_lines.append(f"BTC hash rate: {hash_rate}")
     if etf_flows_line:
         ctx_lines.append(etf_flows_line)
+        # Include day-of-week for the latest data point to prevent LLM hallucination
+        as_of = etf_flows_summary.get('as_of')
+        if as_of:
+            try:
+                dt = datetime.datetime.strptime(as_of, "%d %b %Y")
+                ctx_lines.append(f"ETF data as-of day-of-week: {dt.strftime('%A')}")
+            except ValueError:
+                pass
         _div = (
             etf_flows_summary.get('window_lead') is not None
             and etf_flows_summary['window_lead'] > 0
@@ -649,6 +657,22 @@ def llm_analyst_take():
         ctx_lines.append(f"STRC (Strategy Inc.): ${strc_price_num:.2f} ({strc_pct_val:+.2f}%)")
         if strc_vol_ratio is not None:
             ctx_lines.append(f"STRC volume: {strc_vol_ratio:.1f}x avg")
+            # Normalize for partial trading day — at 6am HST (noon ET) the NASDAQ
+            # is ~38% through its session; 0.4x is perfectly normal, not low.
+            et_now = datetime.datetime.now(zoneinfo.ZoneInfo('America/New_York'))
+            mkt_open = et_now.replace(hour=9, minute=30, second=0, microsecond=0)
+            mkt_close = et_now.replace(hour=16, minute=0, second=0, microsecond=0)
+            session_min = (mkt_close - mkt_open).total_seconds() / 60.0
+            elapsed_min = max(0, min(session_min, (et_now - mkt_open).total_seconds() / 60.0))
+            if 0 < elapsed_min < session_min:
+                pct = elapsed_min / session_min * 100
+                expected_mult = elapsed_min / session_min
+                effective_ratio = strc_vol_ratio / expected_mult if expected_mult > 0 else strc_vol_ratio
+                ctx_lines.append(
+                    f"STRC volume context: market ~{pct:.0f}% through session; "
+                    f"pro-rata expected {expected_mult:.2f}x full-day avg → "
+                    f"effective pace: {effective_ratio:.1f}x (only flag if materially outside 0.7–1.3x range)"
+                )
         if strc_hi52 and strc_lo52 and strc_price_num:
             range_pct = ((strc_price_num - strc_lo52) / (strc_hi52 - strc_lo52)) * 100
             ctx_lines.append(f"STRC in 52w range: {range_pct:.0f}% from low (${strc_lo52:.0f}–${strc_hi52:.0f})")
