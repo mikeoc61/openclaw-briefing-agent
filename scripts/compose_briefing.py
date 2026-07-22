@@ -205,6 +205,35 @@ if not btcnode_summary:
 btc_price_val = extract_first(r'price=([0-9.]+)', btc_sma)
 hash_rate = extract_first(r'Hash rate:\s+([^\n]+)', snap)
 difficulty = extract_first(r'Difficulty:\s+([^\n]+)', snap)
+
+# Enhanced on-chain metrics from bitcoin_snapshot.sh
+retarget_proj = extract_first(r'Retarget:\s+[^\|]+\|\s*proj\s+([+-][0-9.]+)%', snap)
+fee_subsidy = extract_first(r'Fee/subsidy 24h:\s*([0-9.]+)%', snap)
+blocks_24h = extract_first(r'Blocks 24h:\s*([0-9]+)', snap)
+block_fullness = extract_first(r'fullness\s+([0-9]+)%', snap)
+p50_fee = extract_first(r'paid p50\s+([0-9.]+)\s+sat/vB', snap)
+miner_rev = extract_first(r'miner rev\s+([0-9,.]+)\s+BTC', snap)
+tx_rate_7d = extract_first(r'Tx rate \(28d\):\s*([^\n]+)', snap)
+
+# Parse numeric values for Analyst's Take context
+retarget_proj_num = None
+if retarget_proj:
+    try: retarget_proj_num = float(retarget_proj)
+    except: pass
+fee_subsidy_num = None
+if fee_subsidy:
+    try: fee_subsidy_num = float(fee_subsidy)
+    except: pass
+tx_rate_num = None
+tx_rate_pct = None
+if tx_rate_7d:
+    m = re.search(r'([0-9.]+)\s+tx/s\s*.*?([+-][0-9.]+)%', tx_rate_7d)
+    if m:
+        try: tx_rate_num = float(m.group(1))
+        except: pass
+        try: tx_rate_pct = float(m.group(2))
+        except: pass
+
 bitcoin_summary = ""
 if btc_price_val:
     bitcoin_summary = f"Price: ${btc_price_val}"
@@ -212,6 +241,24 @@ if hash_rate:
     bitcoin_summary += f" | {hash_rate}"
 if difficulty:
     bitcoin_summary += f" | {difficulty}"
+
+# Compact on-chain metrics line (displayed below price/hash/diff)
+onchain_line = ""
+onchain_parts = []
+if blocks_24h:
+    onchain_parts.append(f"{blocks_24h} blks/24h")
+if block_fullness:
+    onchain_parts.append(f"{block_fullness}% full")
+if p50_fee:
+    onchain_parts.append(f"p50 {p50_fee} sat/vB")
+if fee_subsidy:
+    onchain_parts.append(f"fee/subsidy {fee_subsidy}%")
+if tx_rate_7d:
+    onchain_parts.append(tx_rate_7d)
+if retarget_proj:
+    onchain_parts.append(f"retarget {retarget_proj}%")
+if onchain_parts:
+    onchain_line = "On-chain: " + " | ".join(onchain_parts)
 
 # Global markets
 market_lines = [line.strip() for line in markets.split('\n') if line.strip()] if markets else []
@@ -421,6 +468,8 @@ lines.append("")
 lines.append("BITCOIN")
 #lines.append(bitcoin_summary if bitcoin_summary else "Unavailable")
 lines.append(bitcoin_summary if bitcoin_summary else "Unavailable")
+if onchain_line:
+    lines.append(onchain_line)
 
 try:
     _flows = json.loads((pathlib.Path.home() / '.openclaw/cache/farside_btc.json').read_text())
@@ -605,6 +654,16 @@ def llm_analyst_take():
         ctx_lines.append(f"BTC 200d SMA: ${btc_sma_num:,.0f} | price vs SMA: {btc_sma_pct:+.1f}%")
     if hash_rate:
         ctx_lines.append(f"BTC hash rate: {hash_rate}")
+    if retarget_proj_num is not None:
+        ctx_lines.append(f"BTC retarget projection: {retarget_proj_num:+.2f}% — miner pressure signal")
+    if fee_subsidy_num is not None:
+        ctx_lines.append(f"BTC fee/subsidy 24h: {fee_subsidy_num:.2f}% — under 1%% = apathy floor, over 3%% = demand return")
+    if blocks_24h and block_fullness and p50_fee:
+        ctx_lines.append(f"BTC blocks 24h: {blocks_24h}, {block_fullness}%% full, p50 paid fee {p50_fee} sat/vB (full+low=filler, not demand)")
+    if miner_rev:
+        ctx_lines.append(f"BTC miner revenue 24h: {miner_rev} BTC")
+    if tx_rate_num is not None and tx_rate_pct is not None:
+        ctx_lines.append(f"BTC tx rate (28d): {tx_rate_num:.2f} tx/s ({tx_rate_pct:+.1f}%% 7d)")
     if etf_flows_line:
         ctx_lines.append(etf_flows_line)
         # Include day-of-week for the latest data point to prevent LLM hallucination
