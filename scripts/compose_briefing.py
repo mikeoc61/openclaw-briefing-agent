@@ -253,6 +253,8 @@ if p50_fee:
     onchain_parts.append(f"p50 {p50_fee} sat/vB")
 if fee_subsidy:
     onchain_parts.append(f"fee/subsidy {fee_subsidy}%")
+if miner_rev:
+    onchain_parts.append(f"miner rev {miner_rev} BTC")
 if tx_rate_7d:
     onchain_parts.append(tx_rate_7d)
 if retarget_proj:
