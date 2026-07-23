@@ -7,6 +7,11 @@ from <tmpdir> and prints the plain-text brief to stdout.
 """
 import os, re, sys, json, pathlib, datetime, zoneinfo, urllib.request
 
+try:
+    from market_warehouse import build_payload, write_snapshot
+except Exception:
+    build_payload = write_snapshot = None
+
 TMP = pathlib.Path(sys.argv[1])
 
 def slot(name):
@@ -822,3 +827,26 @@ def llm_analyst_take():
 analyst_take = llm_analyst_take()
 lines.append(analyst_take if analyst_take else "Analysis unavailable.")
 print("\n".join(lines))
+
+if write_snapshot is not None:
+    try:
+        write_snapshot(
+            now.strftime("%Y-%m-%d"),
+            build_payload(
+                hash_rate=hash_rate,
+                difficulty=difficulty,
+                retarget_proj_num=retarget_proj_num,
+                fee_subsidy_num=fee_subsidy_num,
+                blocks_24h=blocks_24h,
+                block_fullness=block_fullness,
+                p50_fee=p50_fee,
+                miner_rev=miner_rev,
+                tx_rate_num=tx_rate_num,
+                tx_rate_pct=tx_rate_pct,
+                btc_price_num=btc_price_num,
+                btc_sma_num=btc_sma_num,
+                btc_sma_pct=btc_sma_pct,
+            ),
+        )
+    except Exception:
+        pass
