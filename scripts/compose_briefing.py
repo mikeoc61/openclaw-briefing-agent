@@ -7,6 +7,13 @@ from <tmpdir> and prints the plain-text brief to stdout.
 """
 import os, re, sys, json, pathlib, datetime, zoneinfo, urllib.request
 
+# Read-only seam into the warehouse (a dedicated ingester is the sole writer).
+# Optional + fail-soft: if unavailable, the brief falls back to snapshot-only render.
+try:
+    from market_warehouse import latest as _wh_latest
+except Exception:
+    _wh_latest = None
+
 TMP = pathlib.Path(sys.argv[1])
 
 def slot(name):
@@ -262,6 +269,39 @@ if retarget_proj:
 if onchain_parts:
     onchain_line = "On-chain: " + " | ".join(onchain_parts)
 
+# Warehouse (read-only, fail-soft): the composer no longer writes on-chain data;
+# a dedicated ingester persists one clean UTC-day-bucketed row per day. Read the
+# latest complete day's economics instead of the snapshot's rolling-24h window.
+# A missing/locked DB or absent row degrades only the "Day (UTC)" line.
+wh_day_line = None
+wh_stale_line = None
+if _wh_latest is not None:
+    try:
+        _wh_row = _wh_latest("onchain")
+    except Exception:
+        _wh_row = None
+    if _wh_row and _wh_row.get("date") is not None:
+        _wd = _wh_row["date"]
+        _wparts = []
+        if _wh_row.get("blocks_day") is not None:
+            _wparts.append(f"{_wh_row['blocks_day']} blks")
+        if _wh_row.get("block_fullness") is not None:
+            _wparts.append(f"{_wh_row['block_fullness']:.0f}% full")
+        if _wh_row.get("p50_fee") is not None:
+            _wparts.append(f"p50 {_wh_row['p50_fee']:.1f} sat/vB")
+        if _wh_row.get("fee_subsidy") is not None:
+            _wparts.append(f"fee/subsidy {_wh_row['fee_subsidy']:.2f}%")
+        if _wh_row.get("miner_rev") is not None:
+            _wparts.append(f"miner rev {_wh_row['miner_rev']:,.1f} BTC")
+        if _wparts:
+            wh_day_line = f"Day (UTC {_wd}): " + " | ".join(_wparts)
+        try:
+            _behind = (datetime.datetime.now(datetime.timezone.utc).date() - _wd).days
+            if _behind > 2:
+                wh_stale_line = f"⚠ warehouse {_behind}d behind (latest complete day {_wd})"
+        except Exception:
+            pass
+
 # Global markets
 market_lines = [line.strip() for line in markets.split('\n') if line.strip()] if markets else []
 
@@ -468,10 +508,24 @@ lines.append("BITCOIND NODE")
 lines.append(btcnode_summary if btcnode_summary else "Unavailable")
 lines.append("")
 lines.append("BITCOIN")
-#lines.append(bitcoin_summary if bitcoin_summary else "Unavailable")
-lines.append(bitcoin_summary if bitcoin_summary else "Unavailable")
-if onchain_line:
-    lines.append(onchain_line)
+if wh_day_line:
+    # Live point-in-time metrics (snapshot collector), then the clean UTC-day
+    # economics (warehouse). Two measurement kinds, labelled so the period is
+    # unambiguous: expect ~144 blocks/day here vs the old rolling ~118.
+    _live = bitcoin_summary if bitcoin_summary else "Unavailable"
+    if retarget_proj:
+        _live += f" | retarget proj {retarget_proj}%"
+    if tx_rate_7d:
+        _live += f" | {tx_rate_7d}"
+    lines.append(f"Live: {_live}")
+    lines.append(wh_day_line)
+    if wh_stale_line:
+        lines.append(wh_stale_line)
+else:
+    # Warehouse unavailable — original snapshot-only render (rolling 24h).
+    lines.append(bitcoin_summary if bitcoin_summary else "Unavailable")
+    if onchain_line:
+        lines.append(onchain_line)
 
 try:
     _flows = json.loads((pathlib.Path.home() / '.openclaw/cache/farside_btc.json').read_text())
