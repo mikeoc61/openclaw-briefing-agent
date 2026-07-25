@@ -35,6 +35,8 @@ scripts/briefing_parent.sh          ← single entrypoint
         ├─ scripts/compose_briefing.py  ← assembles sections + Analyst's Take
         │     (Analyst's Take generated via the LLM configured in
         │      ~/.openclaw/openclaw.json; rule-based fallback)
+        │     (reads the market_warehouse DuckDB read-only for the UTC-day
+        │      on-chain economics line; fail-soft → live snapshot if absent)
         │
         ├─ scripts/render_html.py       ← plain text → minimal HTML
         │
@@ -120,6 +122,7 @@ clear error if the file is missing.
 - `bash`, `flock`, `curl`, `rsync`, `msmtp`
 - Python 3.9+ (`zoneinfo`); collectors additionally use `caldav`, `icalendar`, `recurring_ical_events`
 - Optional integrations: Bitcoin Core (`bitcoin-cli`), Home Assistant, `smartctl` (NOPASSWD sudoers entry), fail2ban (log readable via `adm` group)
+- Optional: the `market_warehouse` package (from the `data_stores` repo) for the read-only UTC-day on-chain history line in the BITCOIN section — the brief degrades to the live snapshot without it
 - OpenClaw for Signal delivery and the LLM Analyst's Take
 
 ## Usage
