@@ -10,9 +10,9 @@ import os, re, sys, json, pathlib, datetime, zoneinfo, urllib.request
 # Read-only seam into the warehouse (a dedicated ingester is the sole writer).
 # Optional + fail-soft: if unavailable, the brief falls back to snapshot-only render.
 try:
-    from market_warehouse import latest as _wh_latest
+    from market_warehouse import latest as _wh_latest, day_pace_retarget as _wh_day_pace
 except Exception:
-    _wh_latest = None
+    _wh_latest = _wh_day_pace = None
 
 TMP = pathlib.Path(sys.argv[1])
 
@@ -215,6 +215,7 @@ difficulty = extract_first(r'Difficulty:\s+([^\n]+)', snap)
 
 # Enhanced on-chain metrics from bitcoin_snapshot.sh
 retarget_proj = extract_first(r'Retarget:\s+[^\|]+\|\s*proj\s+([+-][0-9.]+)%', snap)
+retarget_blocks_left = extract_first(r'Retarget:\s+([0-9]+)\s+blks', snap)
 fee_subsidy = extract_first(r'Fee/subsidy 24h:\s*([0-9.]+)%', snap)
 blocks_24h = extract_first(r'Blocks 24h:\s*([0-9]+)', snap)
 block_fullness = extract_first(r'fullness\s+([0-9]+)%', snap)
@@ -275,6 +276,12 @@ if onchain_parts:
 # A missing/locked DB or absent row degrades only the "Day (UTC)" line.
 wh_day_line = None
 wh_stale_line = None
+wh_day_pace = None
+if _wh_day_pace is not None:
+    try:
+        wh_day_pace = _wh_day_pace()
+    except Exception:
+        wh_day_pace = None
 if _wh_latest is not None:
     try:
         _wh_row = _wh_latest("onchain")
@@ -513,8 +520,19 @@ if wh_day_line:
     # economics (warehouse). Two measurement kinds, labelled so the period is
     # unambiguous: expect ~144 blocks/day here vs the old rolling ~118.
     _live = bitcoin_summary if bitcoin_summary else "Unavailable"
-    if retarget_proj:
+    # Cumulative retarget projection is unstable in the first ~144 blocks of a
+    # fresh period (tiny blocks_elapsed); there, fall back to the warehouse
+    # day-pace variant instead of showing a garbage figure or blank.
+    _elapsed = None
+    if retarget_blocks_left:
+        try:
+            _elapsed = 2016 - int(retarget_blocks_left)
+        except ValueError:
+            _elapsed = None
+    if retarget_proj and (_elapsed is None or _elapsed >= 144):
         _live += f" | retarget proj {retarget_proj}%"
+    elif wh_day_pace is not None:
+        _live += f" | retarget {wh_day_pace:+.2f}% (day-pace)"
     if tx_rate_7d:
         _live += f" | {tx_rate_7d}"
     lines.append(f"Live: {_live}")
