@@ -297,3 +297,64 @@ def test_signal_line_and_context_lines_agree(db):
     view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
     assert f"apathy {view.apathy_days}d" in view.signal_line
     assert f"{view.apathy_days} consecutive days" in "\n".join(view.context_lines())
+
+
+def _with_volume(db: pathlib.Path, spike: bool) -> None:
+    """400 days of weekday-cycled volume; optionally a 3-day spike at the end."""
+    base = datetime.date(2025, 6, 1)
+    rows = []
+    for i in range(400):
+        d = base + datetime.timedelta(days=i)
+        vol = 400.0 if d.weekday() >= 5 else 1200.0
+        if spike and i >= 397:
+            vol *= 6.0
+        rows.append((
+            d.isoformat(),
+            {"onchain": {"fee_subsidy": 2.0, "hash_rate_ehs": 1000.0, "blocks_day": 144},
+             "btc": {"close": 30000.0, "kraken_vol": vol, "kraken_trades": int(vol)}},
+        ))
+    write_snapshots(rows, db_path=db)
+
+
+def test_volume_fragment_fires_on_a_spike(db):
+    _with_volume(db, spike=True)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    assert view.vol_pctile >= 95.0
+    assert "volume" in view.signal_line
+    assert "pctile 2y" in view.signal_line
+
+
+def test_volume_fragment_silent_when_ordinary(db):
+    _with_volume(db, spike=False)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    assert view.vol_pctile is not None
+    assert view.vol_pctile < 95.0
+    assert "volume" not in (view.signal_line or "")
+
+
+def test_volume_context_line_states_it_is_direction_agnostic(db):
+    _with_volume(db, spike=True)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    ctx = "\n".join(view.context_lines())
+    assert "EVENTS, not direction" in ctx
+    assert "single venue" in ctx
+
+
+def test_volume_absent_without_a_btc_table(db):
+    # onchain-only warehouse: the fragment must drop, not raise.
+    _seed_series(db, [{"fee_subsidy": 2.0, "hash_rate_ehs": 1000.0, "blocks_day": 144}] * 60)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 6, 1))
+    assert view.vol_pctile is None
+    assert "volume" not in (view.signal_line or "")
+
+
+def test_every_signal_value_reaches_the_view(db):
+    # Guards a real bug hit while adding vol_pctile: a value computed in
+    # _signal_values but not passed to the dataclass silently keeps its None
+    # default, so the fragment never fires and nothing errors.
+    _with_volume(db, spike=True)
+    values = warehouse_view._signal_values(db)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    assert set(values) <= set(vars(view))
+    for key, expected in values.items():
+        assert getattr(view, key) == expected, f"{key} not wired through"

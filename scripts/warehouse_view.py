@@ -39,6 +39,12 @@ except Exception:
 
 STALE_AFTER_DAYS = 2
 
+# Volume is reported only when notable. A percentile threshold fires (100-N)% of
+# days by construction, so 95 means ~18 days/year rather than ~36 at 90. FTX
+# (2022-11-09) reached 97.5 and clears it; every other backtested regime date sat
+# between 5.9 and 72.3, including all three euphoria peaks.
+VOL_PCTILE_MIN = 95.0
+
 
 @dataclass(frozen=True)
 class OnchainDayView:
@@ -52,6 +58,7 @@ class OnchainDayView:
     fee_pctile: float | None = None
     apathy_days: int | None = None
     hashrate_dd: float | None = None
+    vol_pctile: float | None = None
 
     def context_lines(self) -> list[str]:
         """Warehouse-derived facts for the LLM analyst's context block.
@@ -75,6 +82,14 @@ class OnchainDayView:
             out.append(
                 f"BTC hashrate: {self.hashrate_dd:.1f}% off its 90d high "
                 f"(miner stress; historic washouts ran -33% to -50%)"
+            )
+        if self.vol_pctile is not None and self.vol_pctile >= VOL_PCTILE_MIN:
+            out.append(
+                f"BTC exchange volume: {self.vol_pctile:.0f}th percentile of 2y "
+                f"(Kraken, single venue, weekday-adjusted). Volume marks EVENTS, not "
+                f"direction — pair it with the price move above. It is the only "
+                f"measure here that catches credit/price shocks: at the 2022 FTX "
+                f"collapse it read 97th while fee/subsidy and hashrate saw nothing"
             )
         if out:
             out.append(f"On-chain day above is UTC {self.date:%Y-%m-%d %a}, a complete day")
@@ -137,7 +152,23 @@ def _signal_values(db_path) -> dict:
     except Exception:
         hr_dd = None
 
-    return {"fee_pctile": fee_pct, "apathy_days": streak, "hashrate_dd": hr_dd}
+    # detrend_dow, not smooth_days: exchange volume carries the same weekly cycle
+    # as fee_subsidy, but a volume event lasts 3-4 days and a 7-day mean dilutes
+    # it away (FTX measured 97.5 detrended vs 9.2 smoothed 12 days later).
+    try:
+        vol_pct = percentile_rank(
+            "kraken_vol", window_days=730, table="btc",
+            detrend_dow=True, db_path=db_path,
+        )
+    except Exception:
+        vol_pct = None
+
+    return {
+        "fee_pctile": fee_pct,
+        "apathy_days": streak,
+        "hashrate_dd": hr_dd,
+        "vol_pctile": vol_pct,
+    }
 
 
 def _build_signal_line(values: dict) -> str | None:
@@ -149,6 +180,9 @@ def _build_signal_line(values: dict) -> str | None:
     hr_dd = values["hashrate_dd"]
     if hr_dd is not None and hr_dd < -1:
         bits.append(f"hashrate {hr_dd:.1f}% off 90d high")
+    vol = values.get("vol_pctile")
+    if vol is not None and vol >= VOL_PCTILE_MIN:
+        bits.append(f"volume {_ordinal(vol)} pctile 2y")
     return "Signal: " + " | ".join(bits) if bits else None
 
 
@@ -213,6 +247,7 @@ def onchain_day_view(db_path=None, today: datetime.date | None = None):
         fee_pctile=values["fee_pctile"],
         apathy_days=values["apathy_days"],
         hashrate_dd=values["hashrate_dd"],
+        vol_pctile=values["vol_pctile"],
     )
 
 
