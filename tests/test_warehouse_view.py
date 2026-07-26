@@ -192,8 +192,20 @@ def test_signal_line_present_on_washout(db):
     assert "hashrate -10.0% off 90d high" in view.signal_line
 
 
-def test_signal_line_none_when_history_too_short(db):
+def test_signal_fragments_needing_history_are_suppressed_when_short(db):
+    # percentile_rank and drawdown_from_high require MIN_WINDOW_ROWS and drop
+    # their fragments. apathy_streak has no history requirement, so it honestly
+    # reports the 3 sub-1% days that exist.
     _seed_series(db, [{"fee_subsidy": 0.5, "blocks_day": 144, "hash_rate_ehs": 900.0}] * 3)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 4, 5))
+    assert "pctile" not in view.signal_line
+    assert "off 90d high" not in view.signal_line
+    assert view.signal_line == "Signal: apathy 3d"
+    assert view.day_line.startswith("Day (UTC ")
+
+
+def test_signal_line_none_when_nothing_is_computable(db):
+    _seed_series(db, [{"blocks_day": 144}] * 3)
     view = onchain_day_view(db_path=db, today=datetime.date(2026, 4, 5))
     assert view.signal_line is None
     assert view.day_line.startswith("Day (UTC ")
