@@ -520,16 +520,18 @@ if wh_day_line:
     # economics (warehouse). Two measurement kinds, labelled so the period is
     # unambiguous: expect ~144 blocks/day here vs the old rolling ~118.
     _live = bitcoin_summary if bitcoin_summary else "Unavailable"
-    # Cumulative retarget projection is unstable in the first ~144 blocks of a
-    # fresh period (tiny blocks_elapsed); there, fall back to the warehouse
-    # day-pace variant instead of showing a garbage figure or blank.
+    # Cumulative retarget projection is single-block noise in the first ~10 blocks
+    # of a fresh period (tiny blocks_elapsed); there, fall back to the warehouse
+    # day-pace variant. Matches the warehouse guard (MIN_BLOCKS_FOR_PROJ=10) — the
+    # threshold is 10 not 144 so real early-period signal (e.g. capitulation
+    # slow-block days) still shows the cumulative figure.
     _elapsed = None
     if retarget_blocks_left:
         try:
             _elapsed = 2016 - int(retarget_blocks_left)
         except ValueError:
             _elapsed = None
-    if retarget_proj and (_elapsed is None or _elapsed >= 144):
+    if retarget_proj and (_elapsed is None or _elapsed >= 10):
         _live += f" | retarget proj {retarget_proj}%"
     elif wh_day_pace is not None:
         _live += f" | retarget {wh_day_pace:+.2f}% (day-pace)"
