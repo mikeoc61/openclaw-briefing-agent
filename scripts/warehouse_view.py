@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass
 
 try:
     from market_warehouse import (
-        apathy_streak_pct,
+        apathy_streak,
         day_pace_retarget,
         drawdown_from_high,
         latest,
@@ -86,14 +86,22 @@ def _build_signal_line(db_path) -> str | None:
     independently fail-soft — a None helper simply omits its piece."""
     bits = []
     try:
-        fee_pct = percentile_rank("fee_subsidy", window_days=730, db_path=db_path)
+        # 7d smoothing: fee_subsidy runs ~27% lower at weekends, so the raw daily
+        # percentile substantially reports the day of the week (73% of its bottom
+        # decile is Sat/Sun vs a 29% baseline). A 7-day mean cancels that exactly.
+        fee_pct = percentile_rank(
+            "fee_subsidy", window_days=730, smooth_days=7, db_path=db_path
+        )
     except Exception:
         fee_pct = None
     if fee_pct is not None:
-        bits.append(f"fee/subsidy {_ordinal(fee_pct)} pctile 2y")
+        bits.append(f"fee/subsidy {_ordinal(fee_pct)} pctile 2y (7d)")
 
+    # Absolute threshold, deliberately: a percentile threshold recalibrates to the
+    # regime it measures, so it reports "new lows vs recent history", never the
+    # duration of a sustained regime. Duration is what belongs in the brief.
     try:
-        streak = apathy_streak_pct(percentile=10, window_days=730, db_path=db_path)
+        streak = apathy_streak(db_path=db_path)
     except Exception:
         streak = None
     if streak:
