@@ -257,3 +257,43 @@ def test_day_line_labels_a_weekday(db):
     write_snapshot("2026-07-23", {"onchain": {"blocks_day": 145, "fee_subsidy": 0.69}}, db_path=db)
     view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 24))
     assert view.day_line.startswith("Day (UTC 2026-07-23 Thu):")
+
+
+def test_context_lines_give_the_llm_historical_position(db):
+    _washout(db)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    ctx = view.context_lines()
+    joined = "\n".join(ctx)
+    assert "percentile of 2y" in joined
+    assert "apathy streak: 5 consecutive days" in joined
+    assert "off its 90d high" in joined
+    # The UTC date must be stated or the analyst may treat it as today's data.
+    assert any("complete day" in c for c in ctx)
+
+
+def test_context_lines_empty_when_no_history(db):
+    _seed_series(db, [{"blocks_day": 144}] * 3)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 4, 5))
+    assert view.context_lines() == []
+
+
+def test_context_lines_omit_quiet_hashrate(db):
+    _seed_series(db, [{"fee_subsidy": 5.0, "hash_rate_ehs": 1000.0, "blocks_day": 144}] * 60)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 6, 1))
+    assert not any("90d high" in c for c in view.context_lines())
+
+
+def test_view_exposes_raw_signal_values(db):
+    _washout(db)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    assert view.fee_pctile is not None
+    assert view.apathy_days == 5
+    assert view.hashrate_dd == pytest.approx(-10.0)
+
+
+def test_signal_line_and_context_lines_agree(db):
+    # Both render from the same _signal_values dict; they must not diverge.
+    _washout(db)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    assert f"apathy {view.apathy_days}d" in view.signal_line
+    assert f"{view.apathy_days} consecutive days" in "\n".join(view.context_lines())

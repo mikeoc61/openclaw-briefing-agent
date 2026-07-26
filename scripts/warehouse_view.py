@@ -49,6 +49,36 @@ class OnchainDayView:
     stale_line: str | None
     day_pace: float | None
     signal_line: str | None
+    fee_pctile: float | None = None
+    apathy_days: int | None = None
+    hashrate_dd: float | None = None
+
+    def context_lines(self) -> list[str]:
+        """Warehouse-derived facts for the LLM analyst's context block.
+
+        The analyst otherwise sees only this morning's snapshot, so it has no way
+        to know whether today's numbers are ordinary or extreme. These lines give
+        it the historical position instead of a hardcoded threshold.
+        """
+        out: list[str] = []
+        if self.fee_pctile is not None:
+            out.append(
+                f"BTC fee/subsidy vs history: {self.fee_pctile:.0f}th percentile of 2y "
+                f"(7d avg, weekend-corrected; low = blockspace demand apathy)"
+            )
+        if self.apathy_days:
+            out.append(
+                f"BTC apathy streak: {self.apathy_days} consecutive days under 1.0% "
+                f"fee/subsidy (regime duration, not a new low)"
+            )
+        if self.hashrate_dd is not None and self.hashrate_dd < -1:
+            out.append(
+                f"BTC hashrate: {self.hashrate_dd:.1f}% off its 90d high "
+                f"(miner stress; historic washouts ran -33% to -50%)"
+            )
+        if out:
+            out.append(f"On-chain day above is UTC {self.date:%Y-%m-%d %a}, a complete day")
+        return out
 
     def retarget_fragment(
         self, cumulative: str | float | None, blocks_left: str | int | None
@@ -81,21 +111,18 @@ def _ordinal(p: float) -> str:
     return f"{n}{suffix}"
 
 
-def _build_signal_line(db_path) -> str | None:
-    """Trailing-window context: where today sits vs history. Each fragment is
-    independently fail-soft — a None helper simply omits its piece."""
-    bits = []
+def _signal_values(db_path) -> dict:
+    """Trailing-window position of today's data. Each helper is independently
+    fail-soft — one failing leaves its key None rather than losing the rest."""
+    # 7d smoothing: fee_subsidy runs ~27% lower at weekends, so the raw daily
+    # percentile substantially reports the day of the week (73% of its bottom
+    # decile is Sat/Sun vs a 29% baseline). A 7-day mean cancels that exactly.
     try:
-        # 7d smoothing: fee_subsidy runs ~27% lower at weekends, so the raw daily
-        # percentile substantially reports the day of the week (73% of its bottom
-        # decile is Sat/Sun vs a 29% baseline). A 7-day mean cancels that exactly.
         fee_pct = percentile_rank(
             "fee_subsidy", window_days=730, smooth_days=7, db_path=db_path
         )
     except Exception:
         fee_pct = None
-    if fee_pct is not None:
-        bits.append(f"fee/subsidy {_ordinal(fee_pct)} pctile 2y (7d)")
 
     # Absolute threshold, deliberately: a percentile threshold recalibrates to the
     # regime it measures, so it reports "new lows vs recent history", never the
@@ -104,16 +131,24 @@ def _build_signal_line(db_path) -> str | None:
         streak = apathy_streak(db_path=db_path)
     except Exception:
         streak = None
-    if streak:
-        bits.append(f"apathy {streak}d")
 
     try:
         hr_dd = drawdown_from_high("hash_rate_ehs", window_days=90, db_path=db_path)
     except Exception:
         hr_dd = None
+
+    return {"fee_pctile": fee_pct, "apathy_days": streak, "hashrate_dd": hr_dd}
+
+
+def _build_signal_line(values: dict) -> str | None:
+    bits = []
+    if values["fee_pctile"] is not None:
+        bits.append(f"fee/subsidy {_ordinal(values['fee_pctile'])} pctile 2y (7d)")
+    if values["apathy_days"]:
+        bits.append(f"apathy {values['apathy_days']}d")
+    hr_dd = values["hashrate_dd"]
     if hr_dd is not None and hr_dd < -1:
         bits.append(f"hashrate {hr_dd:.1f}% off 90d high")
-
     return "Signal: " + " | ".join(bits) if bits else None
 
 
@@ -167,14 +202,17 @@ def onchain_day_view(db_path=None, today: datetime.date | None = None):
     except Exception:
         pace = None
 
-    signal_line = _build_signal_line(db_path)
+    values = _signal_values(db_path)
 
     return OnchainDayView(
         date=date,
         day_line=day_line,
         stale_line=stale_line,
         day_pace=pace,
-        signal_line=signal_line,
+        signal_line=_build_signal_line(values),
+        fee_pctile=values["fee_pctile"],
+        apathy_days=values["apathy_days"],
+        hashrate_dd=values["hashrate_dd"],
     )
 
 

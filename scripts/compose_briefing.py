@@ -695,7 +695,14 @@ def llm_analyst_take():
     if retarget_proj_num is not None:
         ctx_lines.append(f"BTC retarget projection: {retarget_proj_num:+.2f}% — miner pressure signal")
     if fee_subsidy_num is not None:
-        ctx_lines.append(f"BTC fee/subsidy 24h: {fee_subsidy_num:.2f}% — under 1%% = apathy floor, over 3%% = demand return")
+        # The warehouse supplies the actual distribution below, so the static
+        # 1%/3% heuristic is only used when history is unavailable — its
+        # thresholds are regime-dependent (weekday medians straddle 1.0% in a
+        # normal fee environment), which is what the percentile replaces.
+        if wh_view is not None and wh_view.fee_pctile is not None:
+            ctx_lines.append(f"BTC fee/subsidy 24h (live, rolling): {fee_subsidy_num:.2f}%")
+        else:
+            ctx_lines.append(f"BTC fee/subsidy 24h: {fee_subsidy_num:.2f}% — under 1%% = apathy floor, over 3%% = demand return")
     if blocks_24h and block_fullness and p50_fee:
         ctx_lines.append(f"BTC blocks 24h: {blocks_24h}, {block_fullness}%% full, p50 paid fee {p50_fee} sat/vB (full+low=filler, not demand)")
     if miner_rev:
@@ -724,6 +731,13 @@ def llm_analyst_take():
                 "BTC ETF flow/price divergence: IBIT net inflow with price below "
                 "200d SMA — possible demand return"
             )
+    # Warehouse history (read-only, fail-soft). Without this the analyst sees only
+    # this morning's snapshot and cannot tell an ordinary reading from an extreme.
+    if wh_view is not None:
+        try:
+            ctx_lines.extend(wh_view.context_lines())
+        except Exception:
+            pass
     if btcnode_summary:
         ctx_lines.append(f"BTC node: {btcnode_summary}")
     if us_avg is not None:
