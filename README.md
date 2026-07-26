@@ -35,14 +35,30 @@ scripts/briefing_parent.sh          ← single entrypoint
         ├─ scripts/compose_briefing.py  ← assembles sections + Analyst's Take
         │     (Analyst's Take generated via the LLM configured in
         │      ~/.openclaw/openclaw.json; rule-based fallback)
-        │     (reads the market_warehouse DuckDB read-only for the UTC-day
-        │      on-chain economics line; fail-soft → live snapshot if absent)
+        │     └─ scripts/warehouse_view.py → ~/data/market.duckdb (read-only)
+        │            UTC-day on-chain economics; fail-soft → live snapshot
         │
         ├─ scripts/render_html.py       ← plain text → minimal HTML
         │
         └─ Deliver: msmtp (email) + openclaw message send (Signal)
               └─ write sent-marker only after BOTH succeed
 ```
+
+### Live snapshot vs. stored history
+
+The brief mixes two kinds of measurement, labelled so the period is unambiguous:
+
+- **`Live:`** — point-in-time values from `bitcoin_snapshot.sh` / `btc_sma.sh`
+  (mempool depth, fee estimates, current hash rate, spot price). A stale mempool
+  reading is useless, so these are always collected fresh.
+- **`Day (UTC …):`** — one complete UTC calendar day of block economics
+  (~144 blocks, not a rolling window), read from the warehouse.
+
+**This repo does not populate that database.** It is written by a separate
+systemd ingester in the [`data_stores`](https://github.com/mikeoc61/data_stores)
+repo (daily at 02:00 UTC, backfilled to 2016); the briefing is strictly a
+read-only consumer and opens the file `read_only=True`. If the warehouse is
+missing, locked, or stale the brief degrades that one line and delivers normally.
 
 ## Repository layout
 
@@ -123,7 +139,7 @@ clear error if the file is missing.
 - `bash`, `flock`, `curl`, `rsync`, `msmtp`
 - Python 3.9+ (`zoneinfo`); collectors additionally use `caldav`, `icalendar`, `recurring_ical_events`
 - Optional integrations: Bitcoin Core (`bitcoin-cli`), Home Assistant, `smartctl` (NOPASSWD sudoers entry), fail2ban (log readable via `adm` group)
-- Optional: the `market_warehouse` package (from the `data_stores` repo) for the read-only UTC-day on-chain history line in the BITCOIN section — the brief degrades to the live snapshot without it
+- Optional: the `market_warehouse` package (from [`data_stores`](https://github.com/mikeoc61/data_stores)) for the `Day (UTC …)` on-chain history line — needs **Python 3.11+** and `duckdb`; without it the brief degrades to the live snapshot
 - OpenClaw for Signal delivery and the LLM Analyst's Take
 
 ## Usage
@@ -168,6 +184,13 @@ This repo is the development copy. Changes are edited here, then copied to the
 Pi host (`~/.openclaw/workspace-briefing/`). After each successful run the
 agent rsyncs `scripts/` and `*.md` into a mirror and pushes — see
 `HEARTBEAT.md` for the exact sync steps.
+
+Sibling helpers (`local_config.py`, `warehouse_view.py`) are imported by
+directory, so they must land in the **same** `scripts/` directory as the script
+importing them — sync `scripts/` as a whole rather than individual files. A
+missing helper degrades silently (guarded import → fallback render) rather than
+erroring, so a partial copy is easy to miss; `scripts/warehouse_view.py` run
+standalone is the quickest check.
 
 ## Privacy notes
 
