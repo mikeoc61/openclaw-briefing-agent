@@ -36,7 +36,8 @@ scripts/briefing_parent.sh          ← single entrypoint
         │     (Analyst's Take generated via the LLM configured in
         │      ~/.openclaw/openclaw.json; rule-based fallback)
         │     └─ scripts/warehouse_view.py → ~/data/market.duckdb (read-only)
-        │            UTC-day on-chain economics; fail-soft → live snapshot
+        │            UTC-day economics + Signal line + analyst context
+        │            fail-soft → live snapshot if unavailable
         │
         ├─ scripts/render_html.py       ← plain text → minimal HTML
         │
@@ -51,14 +52,26 @@ The brief mixes two kinds of measurement, labelled so the period is unambiguous:
 - **`Live:`** — point-in-time values from `bitcoin_snapshot.sh` / `btc_sma.sh`
   (mempool depth, fee estimates, current hash rate, spot price). A stale mempool
   reading is useless, so these are always collected fresh.
-- **`Day (UTC …):`** — one complete UTC calendar day of block economics
-  (~144 blocks, not a rolling window), read from the warehouse.
+- **`Day (UTC … Sat):`** — one complete UTC calendar day of block economics
+  (~144 blocks, not a rolling window), read from the warehouse. The weekday is
+  named because on-chain fees run ~27% lower at weekends and two of every seven
+  briefs report a weekend day — unlabelled, that reads as deterioration.
+- **`Signal:`** — where today sits in the warehouse's history: fee/subsidy
+  percentile (weekend-corrected), apathy-streak duration, hashrate drawdown from
+  its 90-day high, and exchange volume when it reaches the 95th percentile. Each
+  fragment drops independently if its data is unavailable.
+
+These same historical facts are also injected into the **LLM analyst's context**,
+so the Analyst's Take reasons from where today sits in a two-year distribution
+rather than from a hardcoded threshold. That is the point of the warehouse: it
+informs the analysis, not just the display.
 
 **This repo does not populate that database.** It is written by a separate
 systemd ingester in the [`data_stores`](https://github.com/mikeoc61/data_stores)
-repo (daily at 02:00 UTC, backfilled to 2016); the briefing is strictly a
-read-only consumer and opens the file `read_only=True`. If the warehouse is
-missing, locked, or stale the brief degrades that one line and delivers normally.
+repo (daily at 02:00 UTC; on-chain backfilled to 2016, price to 2013). The
+briefing is strictly a read-only consumer and opens the file `read_only=True`.
+If the warehouse is missing, locked, or stale the brief degrades the affected
+lines and delivers normally.
 
 ## Repository layout
 
@@ -72,7 +85,7 @@ missing, locked, or stale the brief degrades that one line and delivers normally
 | `scripts/compose_briefing.py` | Section assembly + analytical synthesis |
 | `scripts/render_html.py` | Email HTML renderer |
 | `scripts/local_config.py` | Shared loader for `~/.openclaw/briefing.env` |
-| `scripts/warehouse_view.py` | Read-only market_warehouse adapter (UTC-day on-chain lines); standalone-runnable |
+| `scripts/warehouse_view.py` | Read-only market_warehouse adapter: Day/Signal lines + analyst context; standalone-runnable |
 | `scripts/*_snapshot.*`, others | Individual collectors (see below) |
 
 ### Collectors
@@ -161,9 +174,16 @@ is success, not an error (see `AGENTS.md`).
 section will show without running collectors or sending a brief:
 
 ```bash
-scripts/warehouse_view.py                 # the day/staleness lines
+scripts/warehouse_view.py                 # day / signal / staleness lines
 scripts/warehouse_view.py --json          # machine-readable
 scripts/warehouse_view.py --retarget-proj=-0.79 --blocks-left=1800
+```
+
+Sample output:
+
+```
+Day (UTC 2026-07-25 Sat): 138 blks | 97% full | p50 1.0 sat/vB | fee/subsidy 0.53% | miner rev 433.5 BTC
+Signal: fee/subsidy 22nd pctile 2y (7d) | apathy 19d | hashrate -12.7% off 90d high
 ```
 
 Exits non-zero when the warehouse is unavailable, so it doubles as a health check.
