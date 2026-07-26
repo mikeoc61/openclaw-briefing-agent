@@ -10,7 +10,7 @@ import os, re, sys, json, pathlib, datetime, zoneinfo, urllib.request
 # Read-only seam into the warehouse (a dedicated ingester is the sole writer).
 # Optional + fail-soft: if unavailable, the brief falls back to snapshot-only render.
 try:
-    from market_warehouse import onchain_day_view as _wh_view
+    from warehouse_view import onchain_day_view as _wh_view
 except Exception:
     _wh_view = None
 
@@ -271,9 +271,9 @@ if onchain_parts:
     onchain_line = "On-chain: " + " | ".join(onchain_parts)
 
 # Warehouse (read-only, fail-soft): a dedicated ingester persists one clean
-# UTC-day-bucketed row per day. Read + formatting live in market_warehouse.view
-# (unit-tested there); None means unavailable and the render falls back to the
-# live snapshot. Never raises, so it cannot affect delivery.
+# UTC-day-bucketed row per day. Read + formatting live in warehouse_view.py
+# (run it standalone to inspect); None means unavailable and the render falls
+# back to the live snapshot. Never raises, so it cannot affect delivery.
 wh_view = None
 if _wh_view is not None:
     try:

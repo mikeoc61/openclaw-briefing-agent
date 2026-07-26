@@ -56,6 +56,7 @@ scripts/briefing_parent.sh          ← single entrypoint
 | `scripts/compose_briefing.py` | Section assembly + analytical synthesis |
 | `scripts/render_html.py` | Email HTML renderer |
 | `scripts/local_config.py` | Shared loader for `~/.openclaw/briefing.env` |
+| `scripts/warehouse_view.py` | Read-only market_warehouse adapter (UTC-day on-chain lines); standalone-runnable |
 | `scripts/*_snapshot.*`, others | Individual collectors (see below) |
 
 ### Collectors
@@ -137,6 +138,29 @@ clear error if the file is missing.
 
 Re-invocations the same day exit 0 with "Briefing already sent today" — this
 is success, not an error (see `AGENTS.md`).
+
+### Inspecting the warehouse data standalone
+
+`scripts/warehouse_view.py` runs on its own — useful to check what the BITCOIN
+section will show without running collectors or sending a brief:
+
+```bash
+scripts/warehouse_view.py                 # the day/staleness lines
+scripts/warehouse_view.py --json          # machine-readable
+scripts/warehouse_view.py --retarget-proj=-0.79 --blocks-left=1800
+```
+
+Exits non-zero when the warehouse is unavailable, so it doubles as a health check.
+
+## Tests
+
+```bash
+pytest        # needs pytest, duckdb, and the market_warehouse package
+```
+
+`conftest.py` puts `scripts/` on `sys.path` so helpers import as they do at
+runtime. Coverage is currently the warehouse adapter; collectors that hit live
+APIs are not unit-tested.
 
 ## Deployment workflow
 
