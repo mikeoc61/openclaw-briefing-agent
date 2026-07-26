@@ -10,9 +10,9 @@ import os, re, sys, json, pathlib, datetime, zoneinfo, urllib.request
 # Read-only seam into the warehouse (a dedicated ingester is the sole writer).
 # Optional + fail-soft: if unavailable, the brief falls back to snapshot-only render.
 try:
-    from market_warehouse import latest as _wh_latest, day_pace_retarget as _wh_day_pace
+    from market_warehouse import onchain_day_view as _wh_view
 except Exception:
-    _wh_latest = _wh_day_pace = None
+    _wh_view = None
 
 TMP = pathlib.Path(sys.argv[1])
 
@@ -270,44 +270,16 @@ if retarget_proj:
 if onchain_parts:
     onchain_line = "On-chain: " + " | ".join(onchain_parts)
 
-# Warehouse (read-only, fail-soft): the composer no longer writes on-chain data;
-# a dedicated ingester persists one clean UTC-day-bucketed row per day. Read the
-# latest complete day's economics instead of the snapshot's rolling-24h window.
-# A missing/locked DB or absent row degrades only the "Day (UTC)" line.
-wh_day_line = None
-wh_stale_line = None
-wh_day_pace = None
-if _wh_day_pace is not None:
+# Warehouse (read-only, fail-soft): a dedicated ingester persists one clean
+# UTC-day-bucketed row per day. Read + formatting live in market_warehouse.view
+# (unit-tested there); None means unavailable and the render falls back to the
+# live snapshot. Never raises, so it cannot affect delivery.
+wh_view = None
+if _wh_view is not None:
     try:
-        wh_day_pace = _wh_day_pace()
+        wh_view = _wh_view()
     except Exception:
-        wh_day_pace = None
-if _wh_latest is not None:
-    try:
-        _wh_row = _wh_latest("onchain")
-    except Exception:
-        _wh_row = None
-    if _wh_row and _wh_row.get("date") is not None:
-        _wd = _wh_row["date"]
-        _wparts = []
-        if _wh_row.get("blocks_day") is not None:
-            _wparts.append(f"{_wh_row['blocks_day']} blks")
-        if _wh_row.get("block_fullness") is not None:
-            _wparts.append(f"{_wh_row['block_fullness']:.0f}% full")
-        if _wh_row.get("p50_fee") is not None:
-            _wparts.append(f"p50 {_wh_row['p50_fee']:.1f} sat/vB")
-        if _wh_row.get("fee_subsidy") is not None:
-            _wparts.append(f"fee/subsidy {_wh_row['fee_subsidy']:.2f}%")
-        if _wh_row.get("miner_rev") is not None:
-            _wparts.append(f"miner rev {_wh_row['miner_rev']:,.1f} BTC")
-        if _wparts:
-            wh_day_line = f"Day (UTC {_wd}): " + " | ".join(_wparts)
-        try:
-            _behind = (datetime.datetime.now(datetime.timezone.utc).date() - _wd).days
-            if _behind > 2:
-                wh_stale_line = f"⚠ warehouse {_behind}d behind (latest complete day {_wd})"
-        except Exception:
-            pass
+        wh_view = None
 
 # Global markets
 market_lines = [line.strip() for line in markets.split('\n') if line.strip()] if markets else []
@@ -515,32 +487,20 @@ lines.append("BITCOIND NODE")
 lines.append(btcnode_summary if btcnode_summary else "Unavailable")
 lines.append("")
 lines.append("BITCOIN")
-if wh_day_line:
+if wh_view:
     # Live point-in-time metrics (snapshot collector), then the clean UTC-day
     # economics (warehouse). Two measurement kinds, labelled so the period is
     # unambiguous: expect ~144 blocks/day here vs the old rolling ~118.
     _live = bitcoin_summary if bitcoin_summary else "Unavailable"
-    # Cumulative retarget projection is single-block noise in the first ~10 blocks
-    # of a fresh period (tiny blocks_elapsed); there, fall back to the warehouse
-    # day-pace variant. Matches the warehouse guard (MIN_BLOCKS_FOR_PROJ=10) — the
-    # threshold is 10 not 144 so real early-period signal (e.g. capitulation
-    # slow-block days) still shows the cumulative figure.
-    _elapsed = None
-    if retarget_blocks_left:
-        try:
-            _elapsed = 2016 - int(retarget_blocks_left)
-        except ValueError:
-            _elapsed = None
-    if retarget_proj and (_elapsed is None or _elapsed >= 10):
-        _live += f" | retarget proj {retarget_proj}%"
-    elif wh_day_pace is not None:
-        _live += f" | retarget {wh_day_pace:+.2f}% (day-pace)"
+    _retarget = wh_view.retarget_fragment(retarget_proj, retarget_blocks_left)
+    if _retarget:
+        _live += f" | {_retarget}"
     if tx_rate_7d:
         _live += f" | {tx_rate_7d}"
     lines.append(f"Live: {_live}")
-    lines.append(wh_day_line)
-    if wh_stale_line:
-        lines.append(wh_stale_line)
+    lines.append(wh_view.day_line)
+    if wh_view.stale_line:
+        lines.append(wh_view.stale_line)
 else:
     # Warehouse unavailable — original snapshot-only render (rolling 24h).
     lines.append(bitcoin_summary if bitcoin_summary else "Unavailable")
