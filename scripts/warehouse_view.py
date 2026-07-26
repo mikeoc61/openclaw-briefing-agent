@@ -87,9 +87,12 @@ class OnchainDayView:
             out.append(
                 f"BTC exchange volume: {self.vol_pctile:.0f}th percentile of 2y "
                 f"(Kraken, single venue, weekday-adjusted). Volume marks EVENTS, not "
-                f"direction — pair it with the price move above. It is the only "
-                f"measure here that catches credit/price shocks: at the 2022 FTX "
-                f"collapse it read 97th while fee/subsidy and hashrate saw nothing"
+                f"direction — pair it with the price move above. Backtested, it fires "
+                f"only on acute single-day capitulations (2015-01-14: 100th; "
+                f"2022-11-09 FTX: 97th), which no other measure here sees. It is quiet "
+                f"at slow bear bottoms (2018: 71st), at supply shocks (2021 China ban: "
+                f"6th) and at every euphoria peak — so it flags the panic itself, not "
+                f"the low, which typically follows days later"
             )
         if out:
             out.append(f"On-chain day above is UTC {self.date:%Y-%m-%d %a}, a complete day")
