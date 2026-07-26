@@ -499,6 +499,8 @@ if wh_view:
         _live += f" | {tx_rate_7d}"
     lines.append(f"Live: {_live}")
     lines.append(wh_view.day_line)
+    if wh_view.signal_line:
+        lines.append(wh_view.signal_line)
     if wh_view.stale_line:
         lines.append(wh_view.stale_line)
 else:

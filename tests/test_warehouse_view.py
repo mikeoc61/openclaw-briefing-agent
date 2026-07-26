@@ -7,7 +7,7 @@ import pathlib
 import duckdb
 import pytest
 
-from market_warehouse import write_snapshot
+from market_warehouse import write_snapshot, write_snapshots
 
 import warehouse_view
 from warehouse_view import main, onchain_day_view
@@ -156,3 +156,78 @@ def test_cli_returns_nonzero_when_unavailable(db, capsys):
 def test_cli_json_when_unavailable(db, capsys):
     assert main(["--db", str(db), "--json"]) == 1
     assert json.loads(capsys.readouterr().out) == {"available": False}
+
+
+def _seed_series(db: pathlib.Path, values: list[dict], start: str = "2026-04-01") -> None:
+    base = datetime.date.fromisoformat(start)
+    rows = [
+        ((base + datetime.timedelta(days=i)).isoformat(), {"onchain": v})
+        for i, v in enumerate(values)
+    ]
+    write_snapshots(rows, db_path=db)
+
+
+def _washout(db: pathlib.Path) -> None:
+    """90 normal days, then a 5-day fee washout with hashrate rolling over."""
+    vals = [
+        {"fee_subsidy": 5.0, "hash_rate_ehs": 1000.0, "blocks_day": 144, "p50_fee": 4.0,
+         "miner_rev": 460.0, "block_fullness": 90.0}
+        for _ in range(90)
+    ]
+    vals += [
+        {"fee_subsidy": 0.1, "hash_rate_ehs": 900.0, "blocks_day": 138, "p50_fee": 1.0,
+         "miner_rev": 433.5, "block_fullness": 97.0}
+        for _ in range(5)
+    ]
+    _seed_series(db, vals)
+
+
+def test_signal_line_present_on_washout(db):
+    _washout(db)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    assert view.signal_line is not None
+    assert view.signal_line.startswith("Signal: ")
+    assert "pctile 2y" in view.signal_line
+    assert "apathy 5d" in view.signal_line
+    assert "hashrate -10.0% off 90d high" in view.signal_line
+
+
+def test_signal_line_none_when_history_too_short(db):
+    _seed_series(db, [{"fee_subsidy": 0.5, "blocks_day": 144, "hash_rate_ehs": 900.0}] * 3)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 4, 5))
+    assert view.signal_line is None
+    assert view.day_line.startswith("Day (UTC ")
+
+
+def test_signal_line_omits_quiet_hashrate_fragment(db):
+    # Hashrate flat at its 90d high -> drawdown ~0 -> fragment suppressed.
+    _seed_series(db, [{"fee_subsidy": 5.0, "hash_rate_ehs": 1000.0, "blocks_day": 144}] * 60)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 6, 1))
+    assert view.signal_line is None or "off 90d high" not in view.signal_line
+
+
+def test_signal_fragment_failure_does_not_break_view(db, monkeypatch):
+    _washout(db)
+
+    def boom(*a, **k):
+        raise RuntimeError("query exploded")
+
+    monkeypatch.setattr(warehouse_view, "percentile_rank", boom)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 6))
+    assert view is not None
+    assert view.day_line.startswith("Day (UTC ")
+    assert "pctile" not in (view.signal_line or "")
+    assert "apathy 5d" in view.signal_line
+
+
+def test_cli_prints_signal_line(db, capsys):
+    _washout(db)
+    assert main(["--db", str(db)]) == 0
+    assert "Signal: " in capsys.readouterr().out
+
+
+def test_cli_json_includes_signal_line(db, capsys):
+    _washout(db)
+    main(["--db", str(db), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert "signal_line" in payload and payload["signal_line"].startswith("Signal: ")

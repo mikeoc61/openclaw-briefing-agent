@@ -25,7 +25,13 @@ import sys
 from dataclasses import asdict, dataclass
 
 try:
-    from market_warehouse import day_pace_retarget, latest
+    from market_warehouse import (
+        apathy_streak_pct,
+        day_pace_retarget,
+        drawdown_from_high,
+        latest,
+        percentile_rank,
+    )
     from market_warehouse.aggregate import MIN_BLOCKS_FOR_PROJ, RETARGET_INTERVAL
     _AVAILABLE = True
 except Exception:
@@ -42,6 +48,7 @@ class OnchainDayView:
     day_line: str
     stale_line: str | None
     day_pace: float | None
+    signal_line: str | None
 
     def retarget_fragment(
         self, cumulative: str | float | None, blocks_left: str | int | None
@@ -66,6 +73,40 @@ class OnchainDayView:
         if self.day_pace is not None:
             return f"retarget {self.day_pace:+.2f}% (day-pace)"
         return ""
+
+
+def _ordinal(p: float) -> str:
+    n = max(1, round(p))
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _build_signal_line(db_path) -> str | None:
+    """Trailing-window context: where today sits vs history. Each fragment is
+    independently fail-soft — a None helper simply omits its piece."""
+    bits = []
+    try:
+        fee_pct = percentile_rank("fee_subsidy", window_days=730, db_path=db_path)
+    except Exception:
+        fee_pct = None
+    if fee_pct is not None:
+        bits.append(f"fee/subsidy {_ordinal(fee_pct)} pctile 2y")
+
+    try:
+        streak = apathy_streak_pct(percentile=10, window_days=730, db_path=db_path)
+    except Exception:
+        streak = None
+    if streak:
+        bits.append(f"apathy {streak}d")
+
+    try:
+        hr_dd = drawdown_from_high("hash_rate_ehs", window_days=90, db_path=db_path)
+    except Exception:
+        hr_dd = None
+    if hr_dd is not None and hr_dd < -1:
+        bits.append(f"hashrate {hr_dd:.1f}% off 90d high")
+
+    return "Signal: " + " | ".join(bits) if bits else None
 
 
 def _format_day_line(row: dict, date: datetime.date) -> str | None:
@@ -114,7 +155,15 @@ def onchain_day_view(db_path=None, today: datetime.date | None = None):
     except Exception:
         pace = None
 
-    return OnchainDayView(date=date, day_line=day_line, stale_line=stale_line, day_pace=pace)
+    signal_line = _build_signal_line(db_path)
+
+    return OnchainDayView(
+        date=date,
+        day_line=day_line,
+        stale_line=stale_line,
+        day_pace=pace,
+        signal_line=signal_line,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
     else:
         print(view.day_line)
+        if view.signal_line:
+            print(view.signal_line)
         if view.stale_line:
             print(view.stale_line)
         if fragment:
