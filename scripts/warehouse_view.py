@@ -131,7 +131,11 @@ def _format_day_line(row: dict, date: datetime.date) -> str | None:
         parts.append(f"miner rev {row['miner_rev']:,.1f} BTC")
     if not parts:
         return None
-    return f"Day (UTC {date}): " + " | ".join(parts)
+    # Name the weekday: fee_subsidy runs ~27% lower at weekends, and 2 of 7
+    # briefs (Sun/Mon HST) report a weekend UTC day, so an unlabelled dip reads
+    # as deterioration. The Signal line is seasonality-corrected; this line is
+    # deliberately one day's raw facts, so the reader needs the cue.
+    return f"Day (UTC {date} {date:%a}): " + " | ".join(parts)
 
 
 def onchain_day_view(db_path=None, today: datetime.date | None = None):

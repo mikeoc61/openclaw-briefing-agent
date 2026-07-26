@@ -42,7 +42,7 @@ def seeded(db) -> pathlib.Path:
 def test_day_line_matches_pi_render(seeded):
     view = onchain_day_view(db_path=seeded, today=datetime.date(2026, 7, 25))
     assert view.day_line == (
-        "Day (UTC 2026-07-24): 154 blks | 98% full | p50 1.0 sat/vB "
+        "Day (UTC 2026-07-24 Fri): 154 blks | 98% full | p50 1.0 sat/vB "
         "| fee/subsidy 0.66% | miner rev 484.4 BTC"
     )
 
@@ -79,7 +79,7 @@ def test_none_when_market_warehouse_unavailable(seeded, monkeypatch):
 def test_partial_row_renders_available_metrics(db):
     write_snapshot("2026-07-24", {"onchain": {"blocks_day": 144}}, db_path=db)
     view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 25))
-    assert view.day_line == "Day (UTC 2026-07-24): 144 blks"
+    assert view.day_line == "Day (UTC 2026-07-24 Fri): 144 blks"
 
 
 def test_all_null_metrics_yields_no_view(db):
@@ -131,7 +131,7 @@ def test_threshold_is_shared_with_the_warehouse():
 def test_cli_prints_day_line(seeded, capsys):
     assert main(["--db", str(seeded)]) == 0
     out = capsys.readouterr().out
-    assert "Day (UTC 2026-07-24): 154 blks" in out
+    assert "Day (UTC 2026-07-24 Fri): 154 blks" in out
     assert "day-pace retarget: +6.94%" in out
 
 
@@ -140,7 +140,7 @@ def test_cli_json_is_machine_readable(seeded, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["available"] is True
     assert payload["date"] == "2026-07-24"
-    assert payload["day_line"].startswith("Day (UTC 2026-07-24)")
+    assert payload["day_line"].startswith("Day (UTC 2026-07-24 Fri)")
 
 
 def test_cli_previews_retarget_fragment(seeded, capsys):
@@ -243,3 +243,17 @@ def test_cli_json_includes_signal_line(db, capsys):
     main(["--db", str(db), "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert "signal_line" in payload and payload["signal_line"].startswith("Signal: ")
+
+
+def test_day_line_labels_a_weekend_day(db):
+    # The point of the label: 2 of 7 briefs (Sun/Mon HST) report a weekend UTC
+    # day, whose fee/subsidy runs ~27% lower for purely calendar reasons.
+    write_snapshot("2026-07-26", {"onchain": {"blocks_day": 140, "fee_subsidy": 0.44}}, db_path=db)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 27))
+    assert view.day_line.startswith("Day (UTC 2026-07-26 Sun):")
+
+
+def test_day_line_labels_a_weekday(db):
+    write_snapshot("2026-07-23", {"onchain": {"blocks_day": 145, "fee_subsidy": 0.69}}, db_path=db)
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 24))
+    assert view.day_line.startswith("Day (UTC 2026-07-23 Thu):")
