@@ -61,8 +61,12 @@ try:
     parts.append(f'Vol: {fmt_vol(today_vol)} ({vol_ratio:.1f}x avg)')
 
     if hi52 and lo52:
-        range_pct = ((price - lo52) / (hi52 - lo52)) * 100
-        parts.append(f'52w: ${lo52:.2f} – ${hi52:.2f} ({range_pct:.0f}% from low)')
+        # Drawdown from the 52w high, not position within the range: it is an
+        # actual return rather than a coordinate, and it matches the idiom the
+        # brief already uses elsewhere ("hashrate -15.3% off 90d high"). The
+        # old "N% from low" read as a return but was (price-lo)/(hi-lo).
+        off_high = (price - hi52) / hi52 * 100
+        parts.append(f'52w: ${lo52:.2f} – ${hi52:.2f} | {off_high:.1f}% off high')
 
     print(' | '.join(parts))
 

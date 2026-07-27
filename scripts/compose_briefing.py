@@ -785,8 +785,16 @@ def llm_analyst_take():
                     f"effective pace: {effective_ratio:.1f}x (only flag if materially outside 0.7–1.3x range)"
                 )
         if strc_hi52 and strc_lo52 and strc_price_num:
-            range_pct = ((strc_price_num - strc_lo52) / (strc_hi52 - strc_lo52)) * 100
-            ctx_lines.append(f"STRC in 52w range: {range_pct:.0f}% from low (${strc_lo52:.0f}–${strc_hi52:.0f})")
+            # Both endpoints as real returns. The previous single figure was a
+            # position within the range ((p-lo)/(hi-lo)) labelled "% from low",
+            # which invites reading it as a return — at $88.39 it said 59% when
+            # the actual gain off the low was 24%.
+            off_high = (strc_price_num - strc_hi52) / strc_hi52 * 100
+            off_low = (strc_price_num - strc_lo52) / strc_lo52 * 100
+            ctx_lines.append(
+                f"STRC vs 52w range (${strc_lo52:.0f}–${strc_hi52:.0f}): "
+                f"{off_high:.1f}% off the high, {off_low:+.1f}% above the low"
+            )
     news_titles = [
         l.lstrip('- ').split(' — ')[0]
         for l in news.splitlines()
