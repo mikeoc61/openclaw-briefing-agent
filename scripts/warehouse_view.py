@@ -196,7 +196,12 @@ def _format_day_line(row: dict, date: datetime.date) -> str | None:
     if row.get("block_fullness") is not None:
         parts.append(f"{row['block_fullness']:.0f}% full")
     if row.get("p50_fee") is not None:
-        parts.append(f"p50 {row['p50_fee']:.1f} sat/vB")
+        # getblockstats reports feerate_percentiles as integer sat/vB, so 0 is a
+        # floor meaning "under 1", not an absence of fees. Rendering it as 0.0
+        # reads like missing data. It bottoms out on Sundays, the weekly demand
+        # trough (DECISIONS #17).
+        p50 = row["p50_fee"]
+        parts.append("p50 <1 sat/vB" if p50 < 1 else f"p50 {p50:.1f} sat/vB")
     if row.get("fee_subsidy") is not None:
         parts.append(f"fee/subsidy {row['fee_subsidy']:.2f}%")
     if row.get("miner_rev") is not None:

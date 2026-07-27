@@ -358,3 +358,27 @@ def test_every_signal_value_reaches_the_view(db):
     assert set(values) <= set(vars(view))
     for key, expected in values.items():
         assert getattr(view, key) == expected, f"{key} not wired through"
+
+
+def test_p50_zero_renders_as_a_floor_not_a_measurement(db):
+    # getblockstats gives integer sat/vB, so 0 means "under 1". Rendering 0.0
+    # reads as missing data. Observed on Sundays, the weekly demand trough.
+    write_snapshot(
+        "2026-07-26",
+        {"onchain": {"blocks_day": 146, "block_fullness": 97.0, "p50_fee": 0.0,
+                     "fee_subsidy": 0.50, "miner_rev": 458.5}},
+        db_path=db,
+    )
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 27))
+    assert "p50 <1 sat/vB" in view.day_line
+    assert "p50 0.0" not in view.day_line
+
+
+def test_p50_at_or_above_one_renders_numerically(db):
+    write_snapshot(
+        "2026-07-25",
+        {"onchain": {"blocks_day": 138, "p50_fee": 1.0, "fee_subsidy": 0.53}},
+        db_path=db,
+    )
+    view = onchain_day_view(db_path=db, today=datetime.date(2026, 7, 26))
+    assert "p50 1.0 sat/vB" in view.day_line
