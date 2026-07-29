@@ -15,6 +15,12 @@ Or run standalone to inspect what the brief would show:
     ./warehouse_view.py
     ./warehouse_view.py --json
     ./warehouse_view.py --retarget-proj -53.69 --blocks-left 2010
+
+Scope: this covers the WAREHOUSE half of the brief's BITCOIN section — the
+`Day (UTC …)` and `Signal:` lines. The `Live:` line above them is assembled by
+compose_briefing.py from bitcoin_snapshot.sh output and is not reproduced here;
+this tool deliberately touches nothing but the database, so it works without a
+node. Run `./bitcoin_snapshot.sh` to see the live half.
 """
 from __future__ import annotations
 
@@ -262,7 +268,11 @@ def onchain_day_view(db_path=None, today: datetime.date | None = None):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="warehouse_view.py",
-        description="Print the warehouse-derived lines for the latest complete UTC day.",
+        description=(
+            "Print the warehouse-derived lines (Day / Signal) for the latest "
+            "complete UTC day. The brief's 'Live:' line comes from "
+            "bitcoin_snapshot.sh, not from here — this reads only the database."
+        ),
     )
     parser.add_argument("--db", default=None, help="warehouse path (default: MARKET_WAREHOUSE_DB or ~/data/market.duckdb)")
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
