@@ -222,6 +222,12 @@ block_fullness = extract_first(r'fullness\s+([0-9]+)%', snap)
 p50_fee = extract_first(r'paid p50\s+([0-9.]+)\s+sat/vB', snap)
 miner_rev = extract_first(r'miner rev\s+([0-9,.]+)\s+BTC', snap)
 tx_rate_7d = extract_first(r'Tx rate \(28d\):\s*([^\n]+)', snap)
+# Mempool backlog in vMB. A full block is 4M weight units = 1M vbytes = 1 vMB,
+# so vMB reads directly as "blocks of backlog" (~10 min each) — the form that
+# answers "how long until this confirms". Point-in-time, so it belongs on the
+# Live line only: mempool state is not recorded in blocks and cannot be
+# backfilled, which is why it is not a warehouse column.
+mempool_vmb = extract_first(r'Mempool:\s*[\d,]+\s*tx\s*/\s*([0-9.]+)\s*vMB', snap)
 
 # Parse numeric values for Analyst's Take context
 retarget_proj_num = None
@@ -497,6 +503,11 @@ if wh_view:
         _live += f" | {_retarget}"
     if tx_rate_7d:
         _live += f" | {tx_rate_7d}"
+    if mempool_vmb:
+        try:
+            _live += f" | mempool ~{float(mempool_vmb):.0f} blks"
+        except ValueError:
+            pass
     lines.append(f"Live: {_live}")
     lines.append(wh_view.day_line)
     if wh_view.signal_line:

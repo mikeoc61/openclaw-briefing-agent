@@ -132,6 +132,24 @@ def test_cli_prints_day_line(seeded, capsys):
     assert main(["--db", str(seeded)]) == 0
     out = capsys.readouterr().out
     assert "Day (UTC 2026-07-24 Fri): 154 blks" in out
+    assert "retarget +6.94% (day-pace)" in out
+
+
+def test_cli_does_not_repeat_the_day_pace_figure(seeded, capsys):
+    # With no --retarget-proj the fragment already falls back to day-pace, so a
+    # separate "day-pace retarget:" line would print the same number twice.
+    main(["--db", str(seeded)])
+    out = capsys.readouterr().out
+    assert out.count("6.94") == 1
+    assert "day-pace retarget:" not in out
+
+
+def test_cli_shows_both_when_they_differ(seeded, capsys):
+    # An established period: the fragment carries the live cumulative figure and
+    # the day-pace line adds genuinely different information.
+    main(["--db", str(seeded), "--retarget-proj", "-0.79", "--blocks-left", "1800"])
+    out = capsys.readouterr().out
+    assert "retarget proj -0.79%" in out
     assert "day-pace retarget: +6.94%" in out
 
 

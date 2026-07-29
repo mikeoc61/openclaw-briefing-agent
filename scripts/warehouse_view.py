@@ -294,7 +294,9 @@ def main(argv: list[str] | None = None) -> int:
             print(view.stale_line)
         if fragment:
             print(f"retarget fragment: {fragment}")
-        if view.day_pace is not None:
+        # Only worth a second line when it differs: with no --retarget-proj the
+        # fragment already falls back to the day-pace figure.
+        if view.day_pace is not None and "(day-pace)" not in fragment:
             print(f"day-pace retarget: {view.day_pace:+.2f}%")
     return 0
 
