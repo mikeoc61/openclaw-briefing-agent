@@ -520,6 +520,30 @@ else:
     if onchain_line:
         lines.append(onchain_line)
 
+
+def _etf_stale_note(summary):
+    """Staleness marker for the ETF cache read, or '' if the data is current.
+
+    farside_flows only writes its cache after a *successful* fetch, so the file
+    on disk always carries `stale: false`, and its `line` and `age_days` freeze
+    at write time. If the refresh timer or the upstream fetch has been failing,
+    the file simply sits there — and reading `line` verbatim would report
+    week-old flows as today's, with nothing in the text to say otherwise.
+
+    So derive the age here, at read time: `as_of` is a plain date string, so it
+    stays accurate however long the file has gone unrefreshed. The 4-day
+    threshold rides over weekends and market holidays (no flows are published
+    then, so a 3-day-old figure on a Monday is normal), matching the
+    DATA-Nd-OLD flag farside_flows uses in its own briefing block.
+    """
+    try:
+        d = datetime.datetime.strptime(summary.get('as_of', ''), '%d %b %Y').date()
+    except (ValueError, TypeError):
+        return ''
+    age = (datetime.datetime.now(datetime.timezone.utc).date() - d).days
+    return f' [STALE: data {age}d old]' if age > 4 else ''
+
+
 try:
     _flows = json.loads((pathlib.Path.home() / '.openclaw/cache/farside_btc.json').read_text())
     etf_flows_line = _flows.get('line')
@@ -529,6 +553,7 @@ except Exception:
     etf_flows_summary = {}
 
 if etf_flows_line:
+    etf_flows_line += _etf_stale_note(etf_flows_summary)
     lines.append(etf_flows_line)
 # btc_sma contains a 'price=...' line for extraction + the display line; show only the SMA line
 btc_sma_display = '\n'.join(l for l in btc_sma.splitlines() if not l.startswith('price='))
