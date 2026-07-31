@@ -888,11 +888,15 @@ def llm_analyst_take():
         # OpenAI-compatible (DeepSeek, OpenAI, etc.)
         # Reasoning models (e.g. deepseek-v4-pro) consume tokens for internal
         # reasoning; we need a larger budget than the 200-word output target.
-        payload = json.dumps({
+        completion_limit_key = 'max_completion_tokens' if provider == 'openai' else 'max_tokens'
+        payload = {
             "model": model_id,
-            "max_tokens": 2048,
             "messages": [{"role": "user", "content": prompt}]
-        }).encode()
+        }
+        # GPT-5-family OpenAI models reject the legacy max_tokens parameter.
+        # DeepSeek and other OpenAI-compatible endpoints still use max_tokens.
+        payload[completion_limit_key] = 2048
+        payload = json.dumps(payload).encode()
         req = urllib.request.Request(
             f'{base_url}/v1/chat/completions',
             data=payload,
