@@ -71,8 +71,37 @@ git diff --cached --quiet || (git commit -m "briefing sync $(date +%Y-%m-%d): up
 - `USER.md` and `memory/` are gitignored (personal content)
 
 ## Collectors
-- **Farside ETF flows:** collector script renamed `farside_btc.py` → `farside_flows.py`
-  (called by the morning briefing parent). Now multi-asset: accepts `btc`, `eth`,
-  and `sol` as arguments. Cache output filename unchanged: still writes
-  `~/.openclaw/cache/farside_btc.json`, read by `scripts/compose_briefing.py`
-  (~L394). Brief stays BTC-only for now — no compose_briefing.py change needed.
+- **Farside ETF flows:** collector script renamed `farside_btc.py` → `farside_flows.py`.
+  Now multi-asset: accepts `btc`, `eth`, and `sol` as arguments. Cache output
+  filename unchanged: still writes `~/.openclaw/cache/farside_btc.json`.
+  Brief stays BTC-only for now — no compose_briefing.py change needed.
+
+  **It is NOT part of the briefing pipeline.** `briefing_parent.sh` never invokes
+  it. It runs nightly under its own **user-level** systemd units —
+  `farside-flows.service` + `farside-flows.timer`, managed with `systemctl --user`
+  — and refreshes the cache independently. `compose_briefing.py` only *reads* that
+  cache (the ETF block near L547), inside a `try`, so a missing or unreadable file
+  silently drops the flows line rather than failing the brief.
+
+  ```bash
+  systemctl --user status farside-flows.timer
+  ```
+
+  User units, so: no `sudo`, and they only run while the user's systemd instance
+  is alive — `loginctl enable-linger` is what keeps that true across reboots
+  without an active login. If the timer ever quietly stops firing after a reboot,
+  check lingering (`loginctl show-user "$USER" -p Linger`) before the unit itself.
+
+  Because the two are decoupled, a dead collector is invisible from the briefing
+  side: `farside_flows` writes its cache only after a *successful* fetch, so the
+  file on disk always says `stale: false` and its `line` freezes at write time.
+  `_etf_stale_note()` in `compose_briefing.py` exists for exactly this — it
+  re-derives age from `as_of` at read time and appends `[STALE: data Nd old]`
+  past 4 days (the threshold rides over weekends and market holidays). If that
+  marker starts appearing, the collector or its schedule is the thing to check,
+  not the brief.
+
+  The collector lives in the parent workspace, not in this repo's `scripts/`.
+  A duplicate copy that had accumulated here was deleted 2026-07-31 (a stray
+  symlink to it went earlier, in `1e876a9`) — the live collector is unaffected.
+  Don't re-add a copy: two versions with one cache path is the failure mode.
