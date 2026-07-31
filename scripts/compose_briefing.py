@@ -581,8 +581,6 @@ lines.append("")
 lines.append("DIGITAL CREDIT — STRC (Strategy Inc.)")
 lines.append(strc_summary)
 lines.append("")
-lines.append("ANALYST'S TAKE")
-
 # ── Market-session awareness ─────────────────────────────────────────────────
 # briefing_parent.sh writes market_status.txt via market_calendar.py:
 #   open | closed:weekend | closed:holiday:<name>
@@ -705,6 +703,11 @@ def llm_analyst_take():
     if not entry:
         return None
     base_url, env_key, is_anthropic = entry
+
+    def response_model(resp):
+        """Return a stable provider/model reference for the rendered heading."""
+        used = resp.get('model') or model_id
+        return used if '/' in used else f"{provider}/{used}"
 
     # Read API key: try environment first, fall back to openclaw.env
     # (cron-isolated sessions don't source .bashrc, so env vars won't be set)
@@ -877,7 +880,8 @@ def llm_analyst_take():
         try:
             with urllib.request.urlopen(req, timeout=90) as r:
                 resp = json.load(r)
-            return resp['content'][0]['text'].strip()
+            text = resp['content'][0]['text'].strip()
+            return text, response_model(resp)
         except Exception:
             return None
     else:
@@ -909,10 +913,15 @@ def llm_analyst_take():
                     # Take the last paragraph of reasoning as analysis
                     paras = rc.split('\n\n')
                     content = paras[-1] if paras else rc
-            return content
+            return content, response_model(resp)
         except Exception:
             return None
 
-analyst_take = llm_analyst_take()
+analyst_result = llm_analyst_take()
+if analyst_result:
+    analyst_take, analyst_model = analyst_result
+else:
+    analyst_take, analyst_model = None, "unavailable"
+lines.append(f"ANALYST'S TAKE [model = {analyst_model}]")
 lines.append(analyst_take if analyst_take else "Analysis unavailable.")
 print("\n".join(lines))
