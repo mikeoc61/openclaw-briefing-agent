@@ -741,13 +741,13 @@ def llm_analyst_take():
         if wh_view is not None and wh_view.fee_pctile is not None:
             ctx_lines.append(f"BTC fee/subsidy 24h (live, rolling): {fee_subsidy_num:.2f}%")
         else:
-            ctx_lines.append(f"BTC fee/subsidy 24h: {fee_subsidy_num:.2f}% — under 1%% = apathy floor, over 3%% = demand return")
+            ctx_lines.append(f"BTC fee/subsidy 24h: {fee_subsidy_num:.2f}% — under 1% = apathy floor, over 3% = demand return")
     if blocks_24h and block_fullness and p50_fee:
-        ctx_lines.append(f"BTC blocks 24h: {blocks_24h}, {block_fullness}%% full, p50 paid fee {p50_fee} sat/vB (full+low=filler, not demand)")
+        ctx_lines.append(f"BTC blocks 24h: {blocks_24h}, {block_fullness}% full, p50 paid fee {p50_fee} sat/vB (full+low=filler, not demand)")
     if miner_rev:
         ctx_lines.append(f"BTC miner revenue 24h: {miner_rev} BTC")
     if tx_rate_num is not None and tx_rate_pct is not None:
-        ctx_lines.append(f"BTC tx rate (28d): {tx_rate_num:.2f} tx/s ({tx_rate_pct:+.1f}%% 7d)")
+        ctx_lines.append(f"BTC tx rate (28d): {tx_rate_num:.2f} tx/s ({tx_rate_pct:+.1f}% 7d)")
     if etf_flows_line:
         ctx_lines.append(etf_flows_line)
         # Include day-of-week for the latest data point to prevent LLM hallucination
