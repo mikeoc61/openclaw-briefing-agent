@@ -71,6 +71,21 @@ git diff --cached --quiet || (git commit -m "briefing sync $(date +%Y-%m-%d): up
 - `USER.md` and `memory/` are gitignored (personal content)
 
 ## Collectors
+- **Memory/swap (`mem_snapshot.py`):** zswap-aware replacement for the old
+  "swap used > 64M ⚠" heuristic in `compose_briefing.py`. Swap slot usage is
+  context only (on this host: SwapCached + Zswapped, ~0 on disk). Alarms only
+  on consequences — pswpin/pswpout, zswap writeback/rejects, pool >80% of cap,
+  MemAvailable <10%/<5%, oom_kill — as **deltas since the last briefing** via
+  `state/mem_counters.last` (same pattern as `fail2ban_sshd.last`; boot_id
+  detects reboots). No monitoring daemon needed: the alarm inputs are
+  monotonic counters, so a once-daily read catches anything that happened
+  overnight. debugfs zswap counters are read only if permissions allow;
+  otherwise `zswpwb`/`pswpout` in /proc/vmstat cover writeback. Note the brief
+  reports events *between* briefings, not sub-minute timing — if a "when did
+  it happen" question ever matters, that's the only case that would justify
+  the systemd-timer sampler.
+
+
 - **Farside ETF flows:** collector script renamed `farside_btc.py` → `farside_flows.py`.
   Now multi-asset: accepts `btc`, `eth`, and `sol` as arguments. Cache output
   filename unchanged: still writes `~/.openclaw/cache/farside_btc.json`.

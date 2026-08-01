@@ -183,6 +183,7 @@ run tides            'Tides: unavailable'             python3 "$SCRIPTS/tides_sn
 run powerwall        ''                               "$SCRIPTS/powerwall_snapshot.sh"
 run econet           ''                               "$SCRIPTS/econet_snapshot.sh"
 run health           ''                               system_health
+run memstats         ''                               python3 "$SCRIPTS/mem_snapshot.py" "$STATE_DIR"
 run gateway          ''                               gateway_status
 run gw_details       'version_status=check failed'    gateway_details
 run bitcoin_node     ''                               bitcoin_node

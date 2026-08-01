@@ -32,6 +32,7 @@ blink        = slot("blink")
 fail2ban_raw = slot("fail2ban")
 disk_raw     = slot("disk")
 health       = slot("health")
+memstats     = slot("memstats")
 gate         = slot("gateway")
 btcnode      = slot("bitcoin_node")
 snap         = slot("bitcoin_snapshot")
@@ -89,24 +90,31 @@ def _fmt_gb(b):
     return f"{b / 1024**3:.1f}G"
 
 
-# Memory pressure: 'available' (col 7 of free) is the kernel's estimate of
-# memory allocatable without swapping — reclaimable cache counts as free.
-# Effective usage = total - available. Total alone says nothing about health.
+# Memory pressure. Preferred source: mem_snapshot.py (zswap-aware, alarms on
+# consequences — disk swap I/O, writeback, rejects, OOM, MemAvailable floor —
+# with deltas since the last briefing). Swap slot usage from free(1) is
+# context only: on this zswap host it's SwapCached + Zswapped, ~0 on disk.
 mem_line = ""
-_mem = re.search(r'Mem:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', health)
-if _mem:
-    _total, _avail = _to_bytes(_mem.group(1)), _to_bytes(_mem.group(6))
-    if _total and _avail is not None:
-        _eff_used = _total - _avail
-        _pct = _eff_used / _total * 100
-        mem_line = f"{_fmt_gb(_avail)} avail / {_fmt_gb(_total)} ({_pct:.0f}% used)"
-        if _pct >= 85:
-            mem_line += " ⚠ high pressure"
-_swap = re.search(r'Swap:\s+(\S+)\s+(\S+)', health)
-if _swap and mem_line:
-    _swap_used = _to_bytes(_swap.group(2))
-    if _swap_used and _swap_used > 64 * 1024**2:  # ignore trivial residue
-        mem_line += f", swap {_fmt_gb(_swap_used)} in use ⚠"
+_mkv = dict(l.split('=', 1) for l in memstats.splitlines() if '=' in l)
+if _mkv.get("mem_summary"):
+    mem_line = _mkv["mem_summary"]
+    _mstatus = _mkv.get("mem_status", "ok")
+    if _mstatus != "ok":
+        _icon = "⚠" if _mstatus == "warn" else "🔴"
+        mem_line += f" {_icon} {_mkv.get('mem_flags', _mstatus)}"
+    elif _mkv.get("mem_baseline"):
+        mem_line += f" (since {_mkv['mem_baseline']})"
+else:
+    # Legacy fallback: parse free(1) from the health slot. 'available' is the
+    # kernel's estimate of memory allocatable without swapping.
+    _mem = re.search(r'Mem:\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', health)
+    if _mem:
+        _total, _avail = _to_bytes(_mem.group(1)), _to_bytes(_mem.group(6))
+        if _total and _avail is not None:
+            _pct = (_total - _avail) / _total * 100
+            mem_line = f"{_fmt_gb(_avail)} avail / {_fmt_gb(_total)} ({_pct:.0f}% used)"
+            if _pct >= 85:
+                mem_line += " ⚠ high pressure"
 
 disk_free = disk_used = ""
 if disk_match:
