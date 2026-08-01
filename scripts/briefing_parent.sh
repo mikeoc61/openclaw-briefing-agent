@@ -73,8 +73,10 @@ gateway_details() {
   # Current and latest versions
   CURRENT=$(openclaw --version 2>/dev/null || echo "unknown")
   LATEST=$(npm view openclaw version 2>/dev/null || echo "unknown")
-  # Extract semver from e.g. "OpenClaw 2026.6.1 (2e08f0f)"
-  CURRENT_VER=$(echo "$CURRENT" | grep -oP '\d+\.\d+\.\d+' || echo "$CURRENT")
+  # Extract version from e.g. "OpenClaw 2026.6.1 (2e08f0f)" or
+  # "OpenClaw 2026.7.1-2 (0790d9f)" — keep any -suffix (build/pre-release),
+  # since npm reports it and dropping it forces a false version mismatch.
+  CURRENT_VER=$(echo "$CURRENT" | grep -oP '\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?' || echo "$CURRENT")
   if [ "$CURRENT" != "unknown" ] && [ "$LATEST" != "unknown" ]; then
     echo "version_current=${CURRENT}"
     echo "version_latest=${LATEST}"
