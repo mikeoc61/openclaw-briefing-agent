@@ -30,7 +30,8 @@ scripts/briefing_parent.sh          ← single entrypoint
         ├─ Collectors (parallel, each fails soft → $TMPDIR/<name>.txt)
         │     weather, sun, tides, calendar, markets, portfolio,
         │     BTC price/SMA/node, crypto news, Powerwall, EcoNet,
-        │     Blink cameras, disk SMART, fail2ban, gateway status
+        │     Blink cameras, disk SMART, fail2ban, gateway status,
+        │     memory/swap/zswap (delta-based, state/mem_counters.last)
         │
         ├─ scripts/compose_briefing.py  ← assembles sections + Analyst's Take
         │     (Analyst's Take generated via the LLM configured in
@@ -108,6 +109,34 @@ lines and delivers normally.
 | `blink_check.sh` | Home Assistant REST | Camera battery / temp / WiFi issues |
 | `disk_smart.py` | smartctl | Disk health |
 | `fail2ban_summary.sh` | fail2ban log (sudo-free) | SSH ban activity |
+| `mem_snapshot.py` | /proc/meminfo, /proc/vmstat, zswap sysfs/debugfs | Memory/swap health, zswap-aware (see below) |
+
+#### Memory/swap classification (`mem_snapshot.py`)
+
+On a zswap host, `free`'s "swap used" is a context metric, not an alarm — it
+decomposes into SwapCached (RAM-resident) + Zswapped (RAM, compressed) + true
+on-disk pages, and here the on-disk share is ~0. The collector therefore
+alarms only on *consequences* of memory pressure, as **deltas since the last
+briefing** (state in `state/mem_counters.last`, keyed by `boot_id` so a reboot
+resets deltas to since-boot rather than going negative):
+
+- **crit** — `oom_kill` delta, or `MemAvailable` < 5% of RAM
+- **warn** — disk swap I/O (`pswpin`/`pswpout`) > 256 MiB per interval, zswap
+  writeback delta > 0, acute zswap rejects (alloc/kmemcache/reclaim fail),
+  zswap pool > 80% of its cap, or `MemAvailable` < 10%
+
+`reject_compress_fail`/`compress_poor` and small disk I/O volumes are
+deliberately *not* alarmed: incompressible pages are rejected by zswap and
+bypass to the swap device as routine behavior (observable as
+`pswpout ≈ reject_compress_fail`). They appear in the summary as
+`disk wb 0, bypass +NM` context instead. Because all alarm inputs are
+monotonic kernel counters, one read per briefing catches anything that
+happened overnight — no monitoring daemon required. debugfs zswap counters
+are used when readable and skipped otherwise (`zswpwb`/`pswpout` in
+`/proc/vmstat` cover writeback unprivileged).
+
+Manual spot-checks: run with no argument to avoid resetting the briefing's
+delta baseline; `mem_snapshot.py <state_dir>` reads *and advances* the state.
 
 ## Configuration
 
@@ -195,8 +224,9 @@ pytest        # needs pytest, duckdb, and the market_warehouse package
 ```
 
 `conftest.py` puts `scripts/` on `sys.path` so helpers import as they do at
-runtime. Coverage is currently the warehouse adapter; collectors that hit live
-APIs are not unit-tested.
+runtime. Coverage is currently the warehouse adapter and the memory/swap
+classifier (`tests/test_mem_snapshot.py` — pure-function tests, no pi
+required); collectors that hit live APIs are not unit-tested.
 
 ## Deployment workflow
 
