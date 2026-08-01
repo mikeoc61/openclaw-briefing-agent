@@ -32,16 +32,34 @@ def test_phantom_swap_is_ok():
     status, flags, summary = classify(cur, {k: 0 for k in cur["counters"]})
     assert status == "ok"
     assert flags == []
-    assert "disk 0" in summary          # decomposition names the disk truth
+    assert "disk wb 0" in summary       # decomposition names the disk truth
     assert "zswap" in summary
     assert "3.0x" in summary            # 380816/127296 compression ratio
 
 
-def test_disk_swapout_warns():
+def test_incompressible_bypass_is_ok():
+    """Regression: observed Pi state 2026-08-01. pswpout ~= reject_compress_fail
+    means incompressible pages bypassing zswap to disk — routine, not thrash.
+    83M out / 49M in over 4 days with wb=0 must NOT warn."""
+    cur = base_cur(counters={"pswpin": 3159, "pswpout": 5313, "oom_kill": 0,
+                             "written_back_pages": 0,
+                             "reject_compress_fail": 5312,
+                             "reject_compress_poor": 0,
+                             "reject_alloc_fail": 0})
+    status, flags, summary = classify(cur, dict(cur["counters"]))
+    assert status == "ok"
+    assert flags == []
+    assert "bypass +83M" in summary     # visible as context, not alarm
+
+
+def test_disk_swapout_warns_above_threshold():
     cur = base_cur()
-    status, flags, _ = classify(cur, {"pswpout": 1000})
+    # 256M floor at 16K pages = 16384 pages; just above must warn
+    status, flags, _ = classify(cur, {"pswpout": 20000})
     assert status == "warn"
     assert any("swap-out" in f for f in flags)
+    # just below must not
+    assert classify(cur, {"pswpout": 16000})[0] == "ok"
 
 
 def test_writeback_delta_warns():
@@ -51,11 +69,12 @@ def test_writeback_delta_warns():
     assert any("writeback" in f for f in flags)
 
 
-def test_reject_delta_warns():
+def test_acute_reject_warns_but_compress_fail_does_not():
     cur = base_cur()
     status, flags, _ = classify(cur, {"reject_alloc_fail": 3})
     assert status == "warn"
     assert any("rejects" in f for f in flags)
+    assert classify(cur, {"reject_compress_fail": 9999})[0] == "ok"
 
 
 def test_pool_over_80pct_warns():

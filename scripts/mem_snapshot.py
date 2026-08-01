@@ -8,12 +8,15 @@ on-disk pages. This collector alarms only on CONSEQUENCES of pressure:
 
   crit:  oom_kill delta > 0
          MemAvailable < 5% of MemTotal
-  warn:  pswpout/pswpin delta > 0        (real disk swap I/O — works
-                                          with or without zswap; pswp*
-                                          only counts block-layer I/O,
-                                          zswap stores don't touch it)
+  warn:  pswpout/pswpin delta > 256M     (real disk swap I/O — works with
+                                          or without zswap; pswp* only
+                                          counts block-layer I/O. Small
+                                          volumes are incompressible-page
+                                          bypass, not thrash — see
+                                          BYPASS_REJECTS below)
          zswpwb / written_back_pages delta > 0  (zswap pool spilled)
-         zswap reject_* delta > 0        (pool refusing pages — acute)
+         acute reject delta > 0          (alloc/kmemcache/reclaim fail;
+                                          compress_fail is routine bypass)
          zswap pool > 80% of cap         (rejects/writeback imminent)
          MemAvailable < 10% of MemTotal
 
@@ -39,10 +42,18 @@ State:  <state_dir>/mem_counters.last (JSON). Written only when state_dir
 import json, os, pathlib, sys, time
 
 ZSWAP_DEBUG = pathlib.Path("/sys/kernel/debug/zswap")
-REJECT_KEYS = (
-    "reject_alloc_fail", "reject_compress_fail", "reject_compress_poor",
-    "reject_kmemcache_fail", "reject_reclaim_fail",
-)
+# Acute rejects only: the pool failing to allocate/reclaim. compress_fail and
+# compress_poor are ROUTINE — incompressible pages are rejected and bypass
+# straight to the swap device (observable as pswpout ≈ reject_compress_fail).
+# They're collected as context but never alarmed on.
+ACUTE_REJECTS = ("reject_alloc_fail", "reject_kmemcache_fail",
+                 "reject_reclaim_fail")
+BYPASS_REJECTS = ("reject_compress_fail", "reject_compress_poor")
+REJECT_KEYS = ACUTE_REJECTS + BYPASS_REJECTS
+
+# Disk swap I/O below this per briefing interval is incompressible-page
+# bypass churn, not thrash. Thrash is order-of-GBs; alarm well below that.
+DISK_IO_WARN_KB = 256 * 1024  # 256 MiB
 
 
 def read_kv_file(path, split=None):
@@ -154,15 +165,16 @@ def classify(cur, deltas):
         escalate("warn", f"MemAvailable {avail_pct:.0f}% (<10%)")
 
     so, si = d.get("pswpout", 0), d.get("pswpin", 0)
-    if so > 0:
-        escalate("warn", f"disk swap-out +{so * page_kb // 1024}M")
-    if si > 0:
-        escalate("warn", f"disk swap-in +{si * page_kb // 1024}M")
+    so_kb, si_kb = so * page_kb, si * page_kb
+    if so_kb > DISK_IO_WARN_KB:
+        escalate("warn", f"disk swap-out +{so_kb // 1024}M")
+    if si_kb > DISK_IO_WARN_KB:
+        escalate("warn", f"disk swap-in +{si_kb // 1024}M")
 
     wb = d.get("written_back_pages", d.get("zswpwb", 0))
     if wb > 0:
         escalate("warn", f"zswap writeback +{wb} pages")
-    rejects = sum(d.get(k, 0) for k in REJECT_KEYS)
+    rejects = sum(d.get(k, 0) for k in ACUTE_REJECTS)
     if rejects > 0:
         escalate("warn", f"zswap rejects +{rejects}")
 
@@ -186,11 +198,14 @@ def classify(cur, deltas):
         ratio = f" {zs / zp:.1f}x" if zp else ""
         parts.append(f"swap {gm(slots_kb)} slots: {gm(cur['swap_cached_kb'])} cached"
                      f" + {gm(zs)} zswap({gm(zp)} RAM{ratio})")
-        # Ground truth for "is any of it on disk": the writeback counter.
+        # Ground truth for pool overflow: the writeback counter. Bypass I/O
+        # (incompressible pages) is reported separately so "wb 0" stays honest.
         wb_life = c.get("written_back_pages", c.get("zswpwb"))
-        parts.append("disk 0" if wb_life == 0 else
-                     f"disk wb {wb_life} pages" if wb_life is not None else
-                     f"disk I/O since last: {'+' if so or si else ''}{so + si}p")
+        disk = ("wb 0" if wb_life == 0 else
+                f"wb {wb_life}p" if wb_life is not None else "wb n/a")
+        if so:
+            disk += f", bypass +{so_kb // 1024}M"
+        parts.append(f"disk {disk}")
     elif slots_kb > 0:
         parts.append(f"swap {gm(slots_kb)} used"
                      f"{', no I/O since last' if not (so or si) else ''}")
