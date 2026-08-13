@@ -246,7 +246,7 @@ standalone is the quickest check.
 
 The repo is public by design, so:
 
-- `USER.md`, `memory/`, `state/`, `briefing.env`, and all token/credential files are gitignored.
+- `USER.md`, `memory/`, `briefing.env`, and all token/credential files are gitignored. Runtime state lives outside the repo (`~/.openclaw/workspace-briefing/state/`), so none of it can leak via git.
 - Scripts never hardcode contact info, coordinates, or tokens; they fail with an explicit message pointing at the missing config instead.
 - Residual disclosure is intentionally coarse (NOAA tide station IDs and the `Pacific/Honolulu` timezone imply a region, nothing more).
 
