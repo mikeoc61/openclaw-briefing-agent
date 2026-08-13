@@ -93,31 +93,74 @@ PY
 }
 
 spot_metals() {
-  python3 - <<'PY'
-import sys, csv, io, math, urllib.request
+  # Spot XAU/XAG. Primary: Swissquote public feed. Fallback: gold-api.com.
+  # Neither provides history, so day-over-day % comes from state/spot_metals.json
+  # written on the previous run (first run prints price with no % change).
+  python3 - "$(cd "$(dirname "$0")/.." && pwd)/state" <<'PY'
+import json, math, os, sys, time, urllib.request
 
-def spot(symbol, label):
-    # stooq daily history CSV: Date,Open,High,Low,Close,Volume (last row = today)
-    url = f'https://stooq.com/q/d/l/?s={symbol}&i=d'
+state_dir = sys.argv[1]
+state_path = os.path.join(state_dir, 'spot_metals.json')
+
+def _get_json(url):
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req, timeout=20) as r:
-        rows = list(csv.reader(io.StringIO(r.read().decode())))
-    closes = [float(row[4]) for row in rows[1:] if len(row) >= 5]
-    if len(closes) < 2:
-        raise ValueError('insufficient history')
-    price, prev = closes[-1], closes[-2]
-    if not all(math.isfinite(x) and x > 0 for x in (price, prev)):
-        raise ValueError('bad values')
-    chg = price - prev
-    pct = (chg / prev) * 100
-    arrow = '▲' if chg >= 0 else '▼'
-    return f"- {label}: ${price:,.2f} {arrow} {pct:+.2f}%"
+        return json.load(r)
+
+def swissquote(sym):
+    d = _get_json(f'https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/{sym}/USD')
+    mids = []
+    for platform in d:
+        for sp in platform.get('spreadProfilePrices', []):
+            bid, ask = sp.get('bid'), sp.get('ask')
+            if bid and ask:
+                mids.append((bid + ask) / 2)
+    if not mids:
+        raise ValueError('no quotes')
+    return sorted(mids)[len(mids) // 2]  # median mid across profiles
+
+def goldapi(sym):
+    price = _get_json(f'https://api.gold-api.com/price/{sym}').get('price')
+    if not price:
+        raise ValueError('no price')
+    return float(price)
+
+def spot(sym):
+    try:
+        p = swissquote(sym)
+    except Exception:
+        p = goldapi(sym)
+    if not (isinstance(p, (int, float)) and math.isfinite(p) and p > 0):
+        raise ValueError('bad price')
+    return p
 
 try:
-    lines = [spot('xauusd', 'Gold'), spot('xagusd', 'Silver')]
+    gold, silver = spot('XAU'), spot('XAG')
 except Exception:
-    sys.exit(1)  # caller falls back to Yahoo futures
-print('\n'.join(lines))
+    sys.exit(1)  # caller falls back to Yahoo futures, labeled as such
+
+prev = {}
+try:
+    with open(state_path) as f:
+        prev = json.load(f)
+except Exception:
+    pass
+
+def line(label, price, prev_price):
+    if isinstance(prev_price, (int, float)) and prev_price > 0:
+        pct = (price - prev_price) / prev_price * 100
+        arrow = '▲' if pct >= 0 else '▼'
+        return f"- {label}: ${price:,.2f} {arrow} {pct:+.2f}%"
+    return f"- {label}: ${price:,.2f}"
+
+out = [line('Gold', gold, prev.get('gold')), line('Silver', silver, prev.get('silver'))]
+try:
+    os.makedirs(state_dir, exist_ok=True)
+    with open(state_path, 'w') as f:
+        json.dump({'gold': gold, 'silver': silver, 'ts': time.time()}, f)
+except Exception:
+    pass
+print('\n'.join(out))
 PY
 }
 
