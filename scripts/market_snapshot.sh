@@ -17,8 +17,8 @@ label_map = {
   '%5EFTSE': 'FTSE 100',
   '%5EN225': 'Nikkei',
   'DX-Y.NYB': 'DXY',
-  'XAUUSD%3DX': 'Gold',
-  'XAGUSD%3DX': 'Silver',
+  'GC%3DF': 'Gold (futures)',
+  'SI%3DF': 'Silver (futures)',
   'HG%3DF': 'Copper',
   '%5ETNX': 'US 10yr yield',
 }
@@ -58,7 +58,7 @@ try:
         bps = (price - prev) * 100
         bps_arrow = '▲' if bps >= 0 else '▼'
         print(f"- {label}: {price:.3f}% {bps_arrow} {bps:+.1f}bps")
-    elif ticker in ('XAUUSD%3DX', 'XAGUSD%3DX', 'HG%3DF'):
+    elif ticker in ('GC%3DF', 'SI%3DF', 'HG%3DF'):
         print(f"- {label}: ${price:,.2f} {arrow} {pct:+.2f}%")
     else:
         print(f"- {label}: {price:,.3f} {arrow} {pct:+.2f}%")
@@ -92,6 +92,35 @@ except Exception:
 PY
 }
 
+spot_metals() {
+  python3 - <<'PY'
+import sys, csv, io, math, urllib.request
+
+def spot(symbol, label):
+    # stooq daily history CSV: Date,Open,High,Low,Close,Volume (last row = today)
+    url = f'https://stooq.com/q/d/l/?s={symbol}&i=d'
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        rows = list(csv.reader(io.StringIO(r.read().decode())))
+    closes = [float(row[4]) for row in rows[1:] if len(row) >= 5]
+    if len(closes) < 2:
+        raise ValueError('insufficient history')
+    price, prev = closes[-1], closes[-2]
+    if not all(math.isfinite(x) and x > 0 for x in (price, prev)):
+        raise ValueError('bad values')
+    chg = price - prev
+    pct = (chg / prev) * 100
+    arrow = '▲' if chg >= 0 else '▼'
+    return f"- {label}: ${price:,.2f} {arrow} {pct:+.2f}%"
+
+try:
+    lines = [spot('xauusd', 'Gold'), spot('xagusd', 'Silver')]
+except Exception:
+    sys.exit(1)  # caller falls back to Yahoo futures
+print('\n'.join(lines))
+PY
+}
+
 echo "US Indexes:"
 fetch '%5EGSPC'
 fetch '%5EIXIC'
@@ -112,8 +141,10 @@ fx
 
 echo
  echo "Commodities:"
-fetch 'XAUUSD%3DX'   # spot gold (Yahoo FX feed; GC=F futures trade at contango premium)
-fetch 'XAGUSD%3DX'   # spot silver
+# Spot gold/silver from stooq (GC=F/SI=F futures trade at a contango premium
+# vs spot; Yahoo's GC=F currently tracks a deferred contract, inflating gold).
+# Falls back to Yahoo futures, labeled as such, if stooq is unreachable.
+spot_metals || { fetch 'GC%3DF'; fetch 'SI%3DF'; }
 fetch 'HG%3DF'       # COMEX front-month copper (standard "spot" reference)
 
 echo
