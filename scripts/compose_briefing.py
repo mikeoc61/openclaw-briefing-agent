@@ -632,6 +632,8 @@ _, ftse_pct   = market_pct("FTSE 100")
 _, nikkei_pct = market_pct("Nikkei")
 _, dxy_pct    = market_pct("DXY")
 _, gold_pct   = market_pct("Gold")
+if gold_pct is None:  # market_snapshot.sh fell back to Yahoo futures
+    _, gold_pct = market_pct("Gold (futures)")
 _, copper_pct = market_pct("Copper")
 # 10yr yield: output is "X.XXX% ▲/▼ ±Y.Ybps" — parse bps directly
 def yr10_bps():

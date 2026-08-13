@@ -6,7 +6,6 @@ __pycache__/
 USER.md
 memory/
 briefing.env
-state/
 .openclaw/
 openclaw-workspace-state.json
 *.token

@@ -94,9 +94,10 @@ PY
 
 spot_metals() {
   # Spot XAU/XAG. Primary: Swissquote public feed. Fallback: gold-api.com.
-  # Neither provides history, so day-over-day % comes from state/spot_metals.json
+  # Neither provides history, so day-over-day % comes from spot_metals.json
   # written on the previous run (first run prints price with no % change).
-  python3 - "$(cd "$(dirname "$0")/.." && pwd)/state" <<'PY'
+  # State dir matches fail2ban_summary.sh convention; override with STATE_DIR.
+  python3 - "${STATE_DIR:-$HOME/.openclaw/workspace-briefing/state}" <<'PY'
 import json, math, os, sys, time, urllib.request
 
 state_dir = sys.argv[1]
