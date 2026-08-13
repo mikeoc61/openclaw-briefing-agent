@@ -17,8 +17,8 @@ label_map = {
   '%5EFTSE': 'FTSE 100',
   '%5EN225': 'Nikkei',
   'DX-Y.NYB': 'DXY',
-  'GC%3DF': 'Gold',
-  'SI%3DF': 'Silver',
+  'XAUUSD%3DX': 'Gold',
+  'XAGUSD%3DX': 'Silver',
   'HG%3DF': 'Copper',
   '%5ETNX': 'US 10yr yield',
 }
@@ -58,7 +58,7 @@ try:
         bps = (price - prev) * 100
         bps_arrow = '▲' if bps >= 0 else '▼'
         print(f"- {label}: {price:.3f}% {bps_arrow} {bps:+.1f}bps")
-    elif ticker in ('GC%3DF', 'SI%3DF', 'HG%3DF'):
+    elif ticker in ('XAUUSD%3DX', 'XAGUSD%3DX', 'HG%3DF'):
         print(f"- {label}: ${price:,.2f} {arrow} {pct:+.2f}%")
     else:
         print(f"- {label}: {price:,.3f} {arrow} {pct:+.2f}%")
@@ -112,9 +112,9 @@ fx
 
 echo
  echo "Commodities:"
-fetch 'GC%3DF'
-fetch 'SI%3DF'
-fetch 'HG%3DF'
+fetch 'XAUUSD%3DX'   # spot gold (Yahoo FX feed; GC=F futures trade at contango premium)
+fetch 'XAGUSD%3DX'   # spot silver
+fetch 'HG%3DF'       # COMEX front-month copper (standard "spot" reference)
 
 echo
  echo "Rates:"
