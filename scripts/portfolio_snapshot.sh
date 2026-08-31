@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Portfolio snapshot for Morning Intel Briefing
-# AI–Crypto Convergence: High-Convexity Monetization Portfolio
+# Watchlist grouped into tiers (conviction, thematic leverage, optionality,
+# diversifiers); edit the PORTFOLIO dict below to change tickers or tiers.
 # Pulls price + prior close from Yahoo Finance using clean_closes[-2] to
 # avoid the stale previousClose artifact that appears after long weekends.
 
@@ -12,7 +13,8 @@ import json, urllib.request, math, time
 PORTFOLIO = {
     "Core (High Conviction)": ["COIN", "CRCL", "XYZ"],
     "Secondary (Thematic Leverage)": ["ANET", "PLTR"],
-    "Optionality": ["RKLB", "LLY", "BBH"],
+    "Optionality": ["RKLB"],
+    "Diversifiers (Healthcare)": ["LLY", "BBH"],
 }
 
 ALL_TICKERS = [t for tickers in PORTFOLIO.values() for t in tickers]

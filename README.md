@@ -100,7 +100,7 @@ lines and delivers normally.
 | `calendar_snapshot.py` / `.sh` | iCloud CalDAV | Today's events from configured calendars |
 | `market_snapshot.sh` | Yahoo Finance | Indexes, DXY, commodities, US 10yr yield |
 | `market_calendar.py` | — | US equity session status (holiday/half-day aware) |
-| `portfolio_snapshot.sh` | Yahoo Finance | Watchlist tickers, grouped by conviction tier |
+| `portfolio_snapshot.sh` | Yahoo Finance | Watchlist tickers, grouped by tier |
 | `strc_snapshot.sh` | Yahoo Finance | STRC (Strategy Inc.) digital-credit proxy |
 | `bitcoin_snapshot.sh` | Local full node (`bitcoin-cli`) | Chain state, hash rate, difficulty, peers, mempool |
 | `btc_sma.sh` | CoinGecko, Binance fallback | BTC price vs 200-day SMA |

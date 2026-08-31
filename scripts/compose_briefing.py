@@ -579,7 +579,7 @@ lines.append("CRYPTO HEADLINES")
 for line in news_lines:
     lines.append(line)
 lines.append("")
-lines.append("PORTFOLIO — AI/CRYPTO CONVERGENCE")
+lines.append("PORTFOLIO")
 if portfolio:
     for line in portfolio.splitlines():
         lines.append(line)
