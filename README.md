@@ -6,8 +6,9 @@ delivers a single, opinionated daily brief via **HTML email** (msmtp) and
 crypto/on-chain data, home energy, and system health — then synthesizes an
 analyst's take rather than just dumping data.
 
-Built as a workspace for an OpenClaw agent triggered by cron each morning,
-but the pipeline is plain bash + Python and runs standalone.
+Built as a workspace for an OpenClaw agent run each morning by OpenClaw's own
+scheduler (not cron or systemd), but the pipeline is plain bash + Python and
+runs standalone.
 
 ## Design philosophy
 
@@ -230,10 +231,16 @@ required); collectors that hit live APIs are not unit-tested.
 
 ## Deployment workflow
 
-This repo is the development copy. Changes are edited here, then copied to the
-Pi host (`~/.openclaw/workspace-briefing/`). After each successful run the
-agent rsyncs `scripts/` and `*.md` into a mirror and pushes — see
-`HEARTBEAT.md` for the exact sync steps.
+This repo is the development copy — the Mac is the development system, the Pi
+the deployment target. Changes are edited here, committed, and pushed; the Pi
+pulls them into its own checkout at `~/projects/openclaw-briefing-agent`.
+
+No copy step is involved: `~/.openclaw/workspace-briefing/scripts` is a symlink
+to that checkout's `scripts/`, so `git pull` on the Pi *is* the deploy. The
+`workspace-briefing/` directory itself holds only the non-script side — `state/`,
+`*.md`, and the real `briefing.env`. After each successful run the agent rsyncs
+`scripts/` and `*.md` into a mirror and pushes — see `HEARTBEAT.md` for the
+exact sync steps.
 
 Sibling helpers (`local_config.py`, `warehouse_view.py`) are imported by
 directory, so they must land in the **same** `scripts/` directory as the script
