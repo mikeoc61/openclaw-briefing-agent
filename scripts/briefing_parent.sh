@@ -34,7 +34,9 @@ fi
 : "${BRIEFING_EMAIL_TO:?BRIEFING_EMAIL_TO not set in $BRIEFING_ENV}"
 : "${BRIEFING_SIGNAL_TARGET:?BRIEFING_SIGNAL_TARGET not set in $BRIEFING_ENV}"
 SCRIPTS="$BRIEFING_DIR/scripts"
-STATE_DIR="$BRIEFING_DIR/state"
+# Exported so child collectors inherit it rather than each re-deriving the
+# same default (market_snapshot.sh, fail2ban_summary.sh use ${STATE_DIR:-...}).
+export STATE_DIR="$BRIEFING_DIR/state"
 DATE_HST="$(TZ=Pacific/Honolulu date '+%A, %B %-d, %Y')"
 TODAY="$(TZ=Pacific/Honolulu date '+%Y-%m-%d')"
 
