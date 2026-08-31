@@ -12,7 +12,7 @@ import json, urllib.request, math, time
 PORTFOLIO = {
     "Core (High Conviction)": ["COIN", "CRCL", "XYZ"],
     "Secondary (Thematic Leverage)": ["ANET", "PLTR"],
-    "Optionality": ["RKLB"],
+    "Optionality": ["RKLB", "LLY", "BBH"],
 }
 
 ALL_TICKERS = [t for tickers in PORTFOLIO.values() for t in tickers]
