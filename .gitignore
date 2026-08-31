@@ -9,3 +9,6 @@ briefing.env
 .openclaw/
 openclaw-workspace-state.json
 *.token
+
+# Runtime state — live dir is ~/.openclaw/workspace-briefing/state
+state/
