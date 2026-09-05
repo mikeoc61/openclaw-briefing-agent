@@ -108,7 +108,7 @@ lines and delivers normally.
 | `powerwall_snapshot.sh` | Home Assistant REST | Powerwall charge, solar, grid status |
 | `econet_snapshot.sh` | Home Assistant REST | Heat pump water heater status |
 | `blink_check.sh` | Home Assistant REST | Camera battery / temp / WiFi issues |
-| `disk_smart.py` | Root-owned SMART snapshot (direct fallback) | Disk health |
+| `disk_smart.py` | Root-owned SMART snapshot | Disk health |
 | `fail2ban_summary.sh` | fail2ban log (sudo-free) | SSH ban activity |
 | `mem_snapshot.py` | /proc/meminfo, /proc/vmstat, zswap sysfs/debugfs | Memory/swap health, zswap-aware (see below) |
 
@@ -212,10 +212,12 @@ SMART_DEVICE_2="External SSD|/dev/disk/by-id/usb-example|sntasmedia"
 The timer refreshes `/var/cache/openclaw-health/disk-smart.json` at 05:50 in
 `Pacific/Honolulu` and shortly after boot. `disk_smart.py` accepts only a
 root-owned, non-writable snapshot no more than two hours old; otherwise it
-reports a warning. The collector persists only whitelisted health fields, not
-the full `smartctl` payload. Keep device-cgroup restrictions in a host-local
-systemd drop-in because device node names and serial-based paths are private and
-host-specific.
+reports a warning without attempting direct disk access. Linux requires the
+snapshot by default; `SMART_SNAPSHOT_REQUIRED=0` is an explicit opt-out for
+standalone use on systems intentionally configured for direct SMART probing.
+The collector persists only whitelisted health fields, not the full `smartctl`
+payload. Keep device-cgroup restrictions in a host-local systemd drop-in because
+device node names and serial-based paths are private and host-specific.
 
 Re-invocations the same day exit 0 with "Briefing already sent today" — this
 is success, not an error (see `AGENTS.md`).

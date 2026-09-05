@@ -89,3 +89,30 @@ def test_writable_snapshot_is_rejected(tmp_path, monkeypatch):
     result, error = disk_smart._collect_from_snapshot()
     assert result is None
     assert "writable" in error
+
+
+def test_missing_required_snapshot_warns_without_direct_probe(tmp_path, monkeypatch):
+    snapshot = tmp_path / "missing.json"
+    monkeypatch.setattr(disk_smart, "SNAPSHOT_PATH", snapshot)
+    monkeypatch.setattr(disk_smart, "SNAPSHOT_REQUIRED", True)
+    monkeypatch.setattr(
+        disk_smart,
+        "enumerate_disks",
+        lambda: (_ for _ in ()).throw(AssertionError("direct probe attempted")),
+    )
+
+    result = disk_smart.collect()
+    entry = result["disks"][0]
+    assert entry["verdict"]["verdict"] == "WARN"
+    assert "snapshot is missing" in entry["summary"]["error"]
+
+
+def test_explicit_opt_out_allows_direct_probe(tmp_path, monkeypatch):
+    snapshot = tmp_path / "missing.json"
+    monkeypatch.setattr(disk_smart, "SNAPSHOT_PATH", snapshot)
+    monkeypatch.setattr(disk_smart, "SNAPSHOT_REQUIRED", False)
+    monkeypatch.setattr(disk_smart, "enumerate_disks", lambda: [])
+
+    result = disk_smart.collect()
+    assert result["disks"] == []
+    assert "privilege" in result

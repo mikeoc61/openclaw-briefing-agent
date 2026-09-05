@@ -13,8 +13,14 @@ Two distinct problems are kept separate on purpose:
      at all, regardless of flags. This module probes, caches what works,
      and degrades gracefully.
 
-Privilege model (Linux):
-  SMART over USB needs TWO independent gates satisfied:
+Privilege model:
+  Hardened Linux deployments consume a fresh, root-owned snapshot by default.
+  Missing, stale, or insecure snapshots produce a warning; the default
+  briefing path never falls back to direct device access. Set
+  SMART_SNAPSHOT_REQUIRED=0 only for standalone use on systems that
+  intentionally allow direct SMART probing.
+
+Direct probing requires two independent gates on Linux:
     a. open() of the device node  -> filesystem DAC: user in the `disk`
        group, OR CAP_DAC_OVERRIDE, OR root, OR sudo.
     b. ATA/NVMe pass-through ioctl -> CAP_SYS_RAWIO on the smartctl binary,
@@ -41,7 +47,6 @@ import json
 import os
 import platform
 import plistlib
-import re
 import shutil
 import stat
 import subprocess
@@ -63,15 +68,6 @@ CACHE_TTL_SECONDS = 30 * 24 * 3600
 
 PRIVILEGE_MODE = os.environ.get("SMART_PRIVILEGE_MODE", "direct").lower()
 
-# Native NVMe health queries require CAP_SYS_ADMIN on Linux. OpenClaw's
-# no-new-privileges execution boundary intentionally prevents sudo escalation,
-# while this host's USB/NVMe bridge works with direct CAP_SYS_RAWIO. For native
-# NVMe only, fall back to a tightly constrained, short-lived Docker helper.
-# The image must already exist locally; --pull=never and --network=none prevent
-# the morning briefing from fetching or contacting anything.
-DOCKER_NVME_FALLBACK = os.environ.get("SMART_DOCKER_NVME_FALLBACK", "1") != "0"
-DOCKER_SMART_IMAGE = os.environ.get("SMART_DOCKER_IMAGE", "alpine:latest")
-
 SNAPSHOT_PATH = Path(
     os.environ.get(
         "SMART_SNAPSHOT_PATH",
@@ -82,6 +78,10 @@ SNAPSHOT_MAX_AGE_SECONDS = int(
     os.environ.get("SMART_SNAPSHOT_MAX_AGE_SECONDS", str(2 * 3600))
 )
 SNAPSHOT_SCHEMA_VERSION = 1
+SNAPSHOT_REQUIRED = os.environ.get(
+    "SMART_SNAPSHOT_REQUIRED",
+    "1" if platform.system().lower() == "linux" else "0",
+) != "0"
 
 DEVICE_TYPE_CANDIDATES = ["sat", "sntasmedia", "sntjmicron", "scsi", "nvme", "auto"]
 
@@ -475,42 +475,6 @@ def _smartctl_cmd(args: list[str]) -> list[str]:
     return base
 
 
-def _docker_nvme_smartctl_cmd(info: DiskInfo) -> Optional[list[str]]:
-    """Return a constrained Docker command for a native Linux NVMe device.
-
-    The helper runs the host smartctl binary from a read-only host bind. It has
-    no network, cannot pull an image, sees only the controller and namespace
-    device nodes, and receives only the capabilities required for chroot and
-    NVMe admin-log access. This is deliberately not used for USB bridges.
-    """
-    if (
-        not DOCKER_NVME_FALLBACK
-        or platform.system().lower() != "linux"
-        or (info.transport or "").lower() != "nvme"
-        or not _have("docker")
-    ):
-        return None
-
-    match = re.match(r"^(/dev/nvme\d+)n\d+$", info.device)
-    if not match:
-        return None
-    controller = match.group(1)
-    if not Path(controller).exists() or not Path(info.device).exists():
-        return None
-
-    return [
-        "docker", "run", "--rm", "--pull=never", "--network", "none",
-        "--read-only", "--pids-limit", "32",
-        "--security-opt", "no-new-privileges",
-        "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN",
-        "--cap-add", "SYS_RAWIO", "--cap-add", "SYS_CHROOT",
-        "--device", controller, "--device", info.device,
-        "-v", "/:/host:ro", DOCKER_SMART_IMAGE,
-        "chroot", "/host", "/usr/sbin/smartctl",
-        "-j", "-d", "nvme", "-x", info.device,
-    ]
-
-
 def _ordered_candidates(info: DiskInfo, cached_type: Optional[str]) -> list[str]:
     """Probe order: cached -> bridge hint -> transport/vendor-biased defaults."""
     order: list[str] = []
@@ -596,25 +560,6 @@ def get_smart(info: DiskInfo) -> SmartResult:
                 attributes=attrs, source=f"smartctl -d {dtype}",
                 from_cache=(dtype == cached_type),
             )
-
-    # Native NVMe admin-log ioctls require CAP_SYS_ADMIN on Linux. The normal
-    # OpenClaw process cannot gain that through sudo, so use the restricted
-    # local-container helper only after direct access was explicitly denied.
-    if saw_permission_error:
-        docker_cmd = _docker_nvme_smartctl_cmd(info)
-        if docker_cmd:
-            rc, out, err = _run(docker_cmd)
-            status, attrs = _parse_smartctl_json(out)
-            if attrs and not (rc & 0b11):
-                _cache_put(info.serial, "nvme", info.platform)
-                return SmartResult(
-                    device=node, ok=True, device_type="nvme",
-                    smart_status=status, attributes=attrs,
-                    source="smartctl -d nvme via restricted Docker helper",
-                    from_cache=False,
-                )
-            if err.strip():
-                last_err = err.strip().splitlines()[-1]
 
     _cache_invalidate(info.serial)
 
@@ -983,10 +928,12 @@ def _collect_from_snapshot() -> tuple[Optional[dict], Optional[str]]:
 
 
 def collect(include_summary: bool = True, include_verdict: bool = True) -> dict:
-    """Use a trusted snapshot when available, otherwise probe devices directly."""
+    """Use a trusted snapshot, requiring one by default on Linux."""
     snapshot, snapshot_error = _collect_from_snapshot()
     if snapshot:
         return snapshot
+    if snapshot_error is None and SNAPSHOT_REQUIRED:
+        snapshot_error = f"snapshot is missing ({SNAPSHOT_PATH})"
     if snapshot_error:
         return {
             "platform": platform.system().lower(),
