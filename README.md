@@ -108,7 +108,7 @@ lines and delivers normally.
 | `powerwall_snapshot.sh` | Home Assistant REST | Powerwall charge, solar, grid status |
 | `econet_snapshot.sh` | Home Assistant REST | Heat pump water heater status |
 | `blink_check.sh` | Home Assistant REST | Camera battery / temp / WiFi issues |
-| `disk_smart.py` | smartctl | Disk health |
+| `disk_smart.py` | Root-owned SMART snapshot (direct fallback) | Disk health |
 | `fail2ban_summary.sh` | fail2ban log (sudo-free) | SSH ban activity |
 | `mem_snapshot.py` | /proc/meminfo, /proc/vmstat, zswap sysfs/debugfs | Memory/swap health, zswap-aware (see below) |
 
@@ -181,7 +181,7 @@ clear error if the file is missing.
 - Raspberry Pi (or any Linux host) with cron
 - `bash`, `flock`, `curl`, `rsync`, `msmtp`
 - Python 3.9+ (`zoneinfo`); collectors additionally use `caldav`, `icalendar`, `recurring_ical_events`
-- Optional integrations: Bitcoin Core (`bitcoin-cli`), Home Assistant, `smartctl` (NOPASSWD sudoers entry), fail2ban (log readable via `adm` group)
+- Optional integrations: Bitcoin Core (`bitcoin-cli`), Home Assistant, `smartctl`, fail2ban (log readable via `adm` group)
 - Optional: the `market_warehouse` package (from [`data_stores`](https://github.com/mikeoc61/data_stores)) for the `Day (UTC …)` on-chain history line — needs **Python 3.11+** and `duckdb`; without it the brief degrades to the live snapshot
 - OpenClaw for Signal delivery and the LLM Analyst's Take
 
@@ -194,6 +194,28 @@ clear error if the file is missing.
 # Force a re-send after today's brief already went out
 ~/.openclaw/workspace-briefing/scripts/briefing_parent.sh --force
 ```
+
+### Privileged SMART snapshot
+
+On hardened hosts where the OpenClaw Gateway has `NoNewPrivileges=true`, the
+briefing must not invoke `sudo`, file capabilities, or a privileged Docker
+socket to read SMART data. Install `scripts/smart_snapshot_collector.py` as the
+root-owned `/usr/local/libexec/openclaw-smart-snapshot`, install the two units
+from `systemd/`, and define the host's stable by-id device specifications in
+root-owned `/etc/openclaw-smart-snapshot.conf`:
+
+```ini
+SMART_DEVICE_1="System SSD|/dev/disk/by-id/nvme-example|nvme"
+SMART_DEVICE_2="External SSD|/dev/disk/by-id/usb-example|sntasmedia"
+```
+
+The timer refreshes `/var/cache/openclaw-health/disk-smart.json` at 05:50 in
+`Pacific/Honolulu` and shortly after boot. `disk_smart.py` accepts only a
+root-owned, non-writable snapshot no more than two hours old; otherwise it
+reports a warning. The collector persists only whitelisted health fields, not
+the full `smartctl` payload. Keep device-cgroup restrictions in a host-local
+systemd drop-in because device node names and serial-based paths are private and
+host-specific.
 
 Re-invocations the same day exit 0 with "Briefing already sent today" — this
 is success, not an error (see `AGENTS.md`).

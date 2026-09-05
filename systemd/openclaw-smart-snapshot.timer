@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh SMART snapshot before the morning briefing
+
+[Timer]
+OnCalendar=*-*-* 05:50:00 Pacific/Honolulu
+OnBootSec=5min
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=0
+Unit=openclaw-smart-snapshot.service
+
+[Install]
+WantedBy=timers.target
+

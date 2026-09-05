@@ -1,0 +1,34 @@
+[Unit]
+Description=Collect sanitized SMART data for the OpenClaw briefing
+Documentation=file:/usr/local/libexec/openclaw-smart-snapshot
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/openclaw-smart-snapshot.conf
+UMask=0022
+ExecStart=/usr/local/libexec/openclaw-smart-snapshot --output /var/cache/openclaw-health/disk-smart.json --device ${SMART_DEVICE_1} --device ${SMART_DEVICE_2}
+
+# The collector starts privileged but cannot gain any additional privilege.
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_RAWIO
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_RAWIO
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/cache/openclaw-health
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+

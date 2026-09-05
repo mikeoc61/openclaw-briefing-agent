@@ -43,6 +43,7 @@ import platform
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -70,6 +71,17 @@ PRIVILEGE_MODE = os.environ.get("SMART_PRIVILEGE_MODE", "direct").lower()
 # the morning briefing from fetching or contacting anything.
 DOCKER_NVME_FALLBACK = os.environ.get("SMART_DOCKER_NVME_FALLBACK", "1") != "0"
 DOCKER_SMART_IMAGE = os.environ.get("SMART_DOCKER_IMAGE", "alpine:latest")
+
+SNAPSHOT_PATH = Path(
+    os.environ.get(
+        "SMART_SNAPSHOT_PATH",
+        "/var/cache/openclaw-health/disk-smart.json",
+    )
+)
+SNAPSHOT_MAX_AGE_SECONDS = int(
+    os.environ.get("SMART_SNAPSHOT_MAX_AGE_SECONDS", str(2 * 3600))
+)
+SNAPSHOT_SCHEMA_VERSION = 1
 
 DEVICE_TYPE_CANDIDATES = ["sat", "sntasmedia", "sntjmicron", "scsi", "nvme", "auto"]
 
@@ -836,8 +848,152 @@ def health_verdict(
     return out
 
 
+def _snapshot_error_entry(message: str, disk: Optional[dict] = None) -> dict:
+    disk = disk or {}
+    device = disk.get("device_id") or disk.get("device") or str(SNAPSHOT_PATH)
+    info = {
+        "device": device,
+        "model": disk.get("model") or disk.get("label") or "SMART snapshot",
+        "serial": disk.get("serial"),
+        "bus": None,
+        "transport": disk.get("transport"),
+        "vendor_id": None,
+        "product_id": None,
+        "bridge_hint": disk.get("device_type"),
+        "smart_capable": True,
+        "platform": "linux",
+    }
+    summ = {
+        "device": device,
+        "ok": False,
+        "smart_status": None,
+        "device_type": disk.get("device_type"),
+        "error_kind": "snapshot",
+        "error": message,
+    }
+    return {
+        "info": info,
+        "smart": {
+            "device": device,
+            "ok": False,
+            "device_type": disk.get("device_type"),
+            "smart_status": None,
+            "attributes": {},
+            "source": "privileged SMART snapshot",
+            "error": message,
+            "error_kind": "snapshot",
+            "from_cache": True,
+        },
+        "summary": summ,
+        "verdict": health_verdict(summ, serial=info.get("serial")),
+    }
+
+
+def _collect_from_snapshot() -> tuple[Optional[dict], Optional[str]]:
+    """Load a fresh, root-owned snapshot, returning (result, error).
+
+    A present but invalid snapshot is never silently ignored: callers surface a
+    warning rather than falling back to privileged device access or reporting
+    stale health as current.
+    """
+    try:
+        st = SNAPSHOT_PATH.stat()
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, f"cannot stat {SNAPSHOT_PATH}: {exc}"
+
+    if not stat.S_ISREG(st.st_mode):
+        return None, "snapshot path is not a regular file"
+    if st.st_uid != 0:
+        return None, f"snapshot owner uid is {st.st_uid}, expected root"
+    if st.st_mode & 0o022:
+        return None, "snapshot is group/world writable"
+    try:
+        parent_st = SNAPSHOT_PATH.parent.stat()
+    except OSError as exc:
+        return None, f"cannot stat snapshot directory: {exc}"
+    if parent_st.st_uid != 0 or parent_st.st_mode & 0o022:
+        return None, "snapshot directory is not root-owned and non-writable"
+
+    try:
+        payload = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"snapshot unreadable: {exc}"
+
+    if payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+        return None, "snapshot schema version is unsupported"
+    generated = payload.get("generated_at_epoch")
+    if not isinstance(generated, (int, float)):
+        return None, "snapshot timestamp is missing"
+    age = time.time() - generated
+    if age < -300:
+        return None, "snapshot timestamp is in the future"
+    if age > SNAPSHOT_MAX_AGE_SECONDS:
+        return None, f"snapshot is stale ({int(age // 60)} minutes old)"
+    disks = payload.get("disks")
+    if not isinstance(disks, list) or not disks:
+        return None, "snapshot contains no disks"
+
+    entries = []
+    for disk in disks:
+        if not isinstance(disk, dict) or not isinstance(disk.get("summary"), dict):
+            return None, "snapshot contains an invalid disk entry"
+        device = disk.get("device_id") or disk.get("device") or "unknown"
+        info = {
+            "device": device,
+            "model": disk.get("model") or disk.get("label"),
+            "serial": disk.get("serial"),
+            "bus": None,
+            "transport": disk.get("transport"),
+            "vendor_id": None,
+            "product_id": None,
+            "bridge_hint": disk.get("device_type"),
+            "smart_capable": True,
+            "platform": "linux",
+        }
+        summ = dict(disk["summary"])
+        summ["device"] = device
+        smart_ok = bool(summ.get("ok"))
+        smart = {
+            "device": device,
+            "ok": smart_ok,
+            "device_type": summ.get("device_type") or disk.get("device_type"),
+            "smart_status": summ.get("smart_status"),
+            "attributes": {},
+            "source": "privileged SMART snapshot",
+            "error": summ.get("error"),
+            "error_kind": summ.get("error_kind"),
+            "from_cache": True,
+        }
+        entries.append(
+            {
+                "info": info,
+                "smart": smart,
+                "summary": summ,
+                "verdict": health_verdict(summ, serial=info.get("serial")),
+            }
+        )
+    return {
+        "platform": "linux",
+        "source": "privileged SMART snapshot",
+        "snapshot_generated_at": payload.get("generated_at"),
+        "disks": entries,
+    }, None
+
+
 def collect(include_summary: bool = True, include_verdict: bool = True) -> dict:
-    """Full sweep: enumerate, attempt SMART per device, summarize, evaluate."""
+    """Use a trusted snapshot when available, otherwise probe devices directly."""
+    snapshot, snapshot_error = _collect_from_snapshot()
+    if snapshot:
+        return snapshot
+    if snapshot_error:
+        return {
+            "platform": platform.system().lower(),
+            "source": "privileged SMART snapshot",
+            "disks": [_snapshot_error_entry(snapshot_error)],
+        }
+
     result: dict = {
         "platform": platform.system().lower(),
         "privilege": check_privilege(),
