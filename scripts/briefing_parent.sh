@@ -94,13 +94,16 @@ gateway_details() {
   fi
 
   # Default LLM provider and model from config
-  python3 <<'PY' 2>/dev/null || { echo "llm_provider=unknown"; echo "llm_model=unknown"; return; }
+  PYTHONPATH="$SCRIPTS${PYTHONPATH:+:$PYTHONPATH}" python3 <<'PY' 2>/dev/null || { echo "llm_provider=unknown"; echo "llm_model=unknown"; return; }
 import json, os
+from model_config import model_spec, resolve_agent_model
+
 with open(os.path.expanduser("~/.openclaw/openclaw.json")) as f:
     d = json.load(f)
 agents = d.get("agents", {})
 defaults = agents.get("defaults", {})
-default_model = defaults.get("model", "unknown")
+default_model, default_fallbacks = model_spec(defaults.get("model", "unknown"))
+default_model = default_model or "unknown"
 # Extract provider from model string (e.g. deepseek/deepseek-v4-flash)
 if "/" in default_model:
     provider, model_id = default_model.split("/", 1)
@@ -110,9 +113,8 @@ else:
 print(f"llm_provider={provider}")
 print(f"llm_model={model_id}")
 # Also check the briefing agent specific model
-briefing_cfg = next((a for a in d.get("agents", {}).get("list", []) if a.get("id") == "briefing"), {})
-primary = briefing_cfg.get("model", {}).get("primary", default_model)
-fallbacks = briefing_cfg.get("model", {}).get("fallbacks", [])
+primary, fallbacks = resolve_agent_model(d, "briefing")
+primary = primary or default_model
 print(f"briefing_model={primary}")
 if fallbacks:
     print(f"briefing_fallback={', '.join(fallbacks)}")

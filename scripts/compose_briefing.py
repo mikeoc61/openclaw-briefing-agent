@@ -7,6 +7,8 @@ from <tmpdir> and prints the plain-text brief to stdout.
 """
 import os, re, sys, json, pathlib, datetime, zoneinfo, urllib.request
 
+from model_config import resolve_agent_model
+
 # Read-only seam into the warehouse (a dedicated ingester is the sole writer).
 # Optional + fail-soft: if unavailable, the brief falls back to snapshot-only render.
 try:
@@ -694,9 +696,7 @@ def llm_analyst_take():
     config_path = pathlib.Path.home() / '.openclaw/openclaw.json'
     try:
         config = json.loads(config_path.read_text())
-        agent_list = config.get('agents', {}).get('list', [])
-        brief_cfg = next((a for a in agent_list if a.get('id') == 'briefing'), {})
-        model_ref = (brief_cfg.get('model') or {}).get('primary', '')
+        model_ref, _ = resolve_agent_model(config, 'briefing')
         if '/' not in model_ref:
             return None
         provider, model_id = model_ref.split('/', 1)
