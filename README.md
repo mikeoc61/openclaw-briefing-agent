@@ -209,6 +209,30 @@ SMART_DEVICE_1="System SSD|/dev/disk/by-id/nvme-example|nvme"
 SMART_DEVICE_2="External SSD|/dev/disk/by-id/usb-example|sntasmedia"
 ```
 
+Then confine the collector to exactly those devices with a host-local drop-in at
+`/etc/systemd/system/openclaw-smart-snapshot.service.d/devices.conf`, one
+`DeviceAllow` line per node it must open:
+
+```ini
+[Service]
+DevicePolicy=closed
+DeviceAllow=/dev/nvme0 r
+DeviceAllow=/dev/nvme0n1 r
+DeviceAllow=/dev/sda r
+```
+
+Substitute this host's own nodes — `readlink -f /dev/disk/by-id/<id>` resolves
+each by-id path to the node to allow. For NVMe, add the controller
+(`/dev/nvme0`) as well: every `nvme-*` by-id link resolves to the namespace
+(`/dev/nvme0n1`), so the controller node has no by-id path of its own and is
+easy to leave out. Run `sudo systemctl daemon-reload` after any edit, then
+`sudo systemctl enable --now openclaw-smart-snapshot.timer`.
+
+Like `/etc/openclaw-smart-snapshot.conf`, the drop-in is deliberately **not** in
+git: node names and serial-based paths are host-specific. A drive swap means
+editing both files — miss the drop-in and the collector fails on a device
+`DevicePolicy=closed` won't let it open.
+
 The timer refreshes `/var/cache/openclaw-health/disk-smart.json` at 05:50 in
 `Pacific/Honolulu` and shortly after boot. `disk_smart.py` accepts only a
 root-owned, non-writable snapshot no more than two hours old; otherwise it
@@ -216,8 +240,7 @@ reports a warning without attempting direct disk access. Linux requires the
 snapshot by default; `SMART_SNAPSHOT_REQUIRED=0` is an explicit opt-out for
 standalone use on systems intentionally configured for direct SMART probing.
 The collector persists only whitelisted health fields, not the full `smartctl`
-payload. Keep device-cgroup restrictions in a host-local systemd drop-in because
-device node names and serial-based paths are private and host-specific.
+payload.
 
 Re-invocations the same day exit 0 with "Briefing already sent today" — this
 is success, not an error (see `AGENTS.md`).
