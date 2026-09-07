@@ -4,13 +4,18 @@ import datetime
 import json
 import pathlib
 
-import duckdb
 import pytest
 
-from market_warehouse import write_snapshot, write_snapshots
+# The warehouse extras are optional everywhere else: warehouse_view.py and
+# compose_briefing.py both degrade to the live snapshot when market_warehouse is
+# absent. Skip rather than fail collection on a host without duckdb installed.
+duckdb = pytest.importorskip("duckdb")
+pytest.importorskip("market_warehouse")
 
-import warehouse_view
-from warehouse_view import main, onchain_day_view
+from market_warehouse import write_snapshot, write_snapshots  # noqa: E402
+
+import warehouse_view  # noqa: E402
+from warehouse_view import main, onchain_day_view  # noqa: E402
 
 DAY = datetime.date(2026, 7, 24)
 
