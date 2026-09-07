@@ -253,6 +253,35 @@ standalone use on systems intentionally configured for direct SMART probing.
 The collector persists only whitelisted health fields, not the full `smartctl`
 payload.
 
+#### Failure alerts
+
+`OnFailure=openclaw-alert@%n.service` mails a report when a collection run
+fails, so a broken drop-in or a dying disk does not wait for someone to notice a
+stale-snapshot line in the next brief. Install `scripts/alert_unit_failure.sh`
+as `/usr/local/libexec/openclaw-alert` and the `openclaw-alert@.service`
+template alongside the other units.
+
+The template runs as the briefing user rather than root — it reuses that user's
+`~/.msmtprc` and reads `BRIEFING_EMAIL_TO` from `~/.openclaw/briefing.env`, the
+same delivery path as the brief itself, so no credentials enter a privileged
+unit. Set `User=` to the account that owns those files. Reading the failed
+unit's journal also needs that account in `systemd-journal` (or `adm`);
+without it the mail still arrives, just without the log excerpt.
+
+Test it without breaking a disk:
+
+```bash
+sudo systemd-run --unit=openclaw-alert-test \
+  --property=OnFailure=openclaw-alert@openclaw-alert-test.service \
+  /bin/false
+```
+
+**This catches a unit that runs and fails, nothing more.** A timer that was
+disabled or masked, or a host that was powered off, triggers no run and
+therefore no alert — the brief's staleness warning stays the only backstop for
+that case. Confirm the timer is actually armed with `systemctl list-timers
+openclaw-smart-snapshot.timer` after any maintenance.
+
 Re-invocations the same day exit 0 with "Briefing already sent today" — this
 is success, not an error (see `AGENTS.md`).
 

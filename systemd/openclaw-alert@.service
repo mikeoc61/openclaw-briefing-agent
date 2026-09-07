@@ -1,0 +1,28 @@
+[Unit]
+Description=Mail a failure report for %i
+Documentation=file:/usr/local/libexec/openclaw-alert
+
+[Service]
+Type=oneshot
+User=mikeoc
+ExecStart=/usr/local/libexec/openclaw-alert %i
+
+# Deliberately lighter than the collector: this path touches no disks and needs
+# no privilege. ProtectHome is NOT set — the alert reads ~/.msmtprc and
+# ~/.openclaw/briefing.env — and ProtectSystem is `full` rather than `strict` so
+# msmtp can still write its own log under $HOME.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
