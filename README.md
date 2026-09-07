@@ -209,13 +209,21 @@ SMART_DEVICE_1="System SSD|/dev/disk/by-id/nvme-example|nvme"
 SMART_DEVICE_2="External SSD|/dev/disk/by-id/usb-example|sntasmedia"
 ```
 
-Then confine the collector to exactly those devices with a host-local drop-in at
-`/etc/systemd/system/openclaw-smart-snapshot.service.d/devices.conf`, one
-`DeviceAllow` line per node it must open:
+Both entries are NVMe: `sntasmedia` is an NVMe-over-USB bridge, so that drive
+enumerates as a SCSI node (`/dev/sda`) while `smartctl` still passes NVMe admin
+commands through it. **The collector is NVMe-only** — `_summary()` in
+`smart_snapshot_collector.py` reads `nvme_smart_health_information_log` and
+nothing else. A genuine ATA disk (`-d sat`) is accepted by the config and then
+reports `NVMe SMART health log missing` on every run; supporting one means
+teaching `_summary()` to read ATA attributes.
+
+The shipped unit sets `DevicePolicy=closed`, so it can open no disk at all until
+a host-local drop-in at
+`/etc/systemd/system/openclaw-smart-snapshot.service.d/devices.conf` grants one
+`DeviceAllow` line per node it must reach:
 
 ```ini
 [Service]
-DevicePolicy=closed
 DeviceAllow=/dev/nvme0 r
 DeviceAllow=/dev/nvme0n1 r
 DeviceAllow=/dev/sda r
@@ -227,6 +235,9 @@ each by-id path to the node to allow. For NVMe, add the controller
 (`/dev/nvme0n1`), so the controller node has no by-id path of its own and is
 easy to leave out. Run `sudo systemctl daemon-reload` after any edit, then
 `sudo systemctl enable --now openclaw-smart-snapshot.timer`.
+
+An existing drop-in that also sets `DevicePolicy=closed` is redundant but
+harmless — it is a scalar, so the two agree.
 
 Like `/etc/openclaw-smart-snapshot.conf`, the drop-in is deliberately **not** in
 git: node names and serial-based paths are host-specific. A drive swap means

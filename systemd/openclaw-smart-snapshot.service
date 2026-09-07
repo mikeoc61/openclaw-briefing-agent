@@ -14,6 +14,13 @@ ExecStart=/usr/local/libexec/openclaw-smart-snapshot --output /var/cache/opencla
 NoNewPrivileges=true
 CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_RAWIO
 AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_RAWIO
+
+# Fail closed: reaching any device requires a host-local drop-in at
+# /etc/systemd/system/openclaw-smart-snapshot.service.d/devices.conf naming
+# this host's nodes. Without it the collector fails loudly rather than running
+# root with CAP_SYS_RAWIO against every device on the box. See README.md.
+DevicePolicy=closed
+
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
