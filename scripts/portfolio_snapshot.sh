@@ -11,10 +11,10 @@ python3 - <<'PY'
 import json, urllib.request, math, time
 
 PORTFOLIO = {
-    "Core (High Conviction)": ["COIN", "CRCL", "XYZ"],
-    "Secondary (Thematic Leverage)": ["ANET", "PLTR"],
-    "Optionality": ["RKLB"],
-    "Diversifiers (Healthcare)": ["LLY", "BBH"],
+    "Core (High Conviction)": ["COIN", "CRCL", "HOOD", "NVDA"],
+    "Secondary (Thematic Leverage)": ["ANET", "PLTR", "GRID"],
+    "Optionality": ["XYZ"],
+    "Diversifiers (Healthcare/Insurance)": ["LLY", "BBH", "KBWP"],
 }
 
 ALL_TICKERS = [t for tickers in PORTFOLIO.values() for t in tickers]
