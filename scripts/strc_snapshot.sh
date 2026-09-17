@@ -4,9 +4,11 @@
 # Pulls price, volume, and 52-week range from Yahoo Finance
 
 set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-python3 - <<'PY'
-import json, urllib.request, math
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+import json, urllib.request
+from yahoo_session import prior_close, session_volumes
 
 TICKER = 'STRC'
 
@@ -24,11 +26,10 @@ try:
     meta = result['meta']
     closes = result['indicators']['quote'][0].get('close', [])
     volumes = result['indicators']['quote'][0].get('volume', [])
-    clean_closes = [x for x in closes if isinstance(x, (int, float)) and math.isfinite(x)]
-    clean_volumes = [v for v in volumes if isinstance(v, (int, float)) and math.isfinite(v) and v > 0]
+    timestamps = result.get('timestamp', [])
 
     price = meta.get('regularMarketPrice')
-    prev = clean_closes[-2] if len(clean_closes) >= 2 else meta.get('chartPreviousClose')
+    prev = prior_close(meta, timestamps, closes) or meta.get('chartPreviousClose')
 
     if price is None or prev is None:
         raise ValueError('missing price data')
@@ -37,12 +38,15 @@ try:
     pct = (chg / prev) * 100
     arrow = '\u25b2' if chg >= 0 else '\u25bc'
 
-    # Today's volume (last bar) and recent average
-    today_vol = clean_volumes[-1] if clean_volumes else 0
-    # Exclude today for avg (it may still be partial)
-    recent_vols = clean_volumes[:-1] if len(clean_volumes) > 1 else clean_volumes
-    avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 0
-    vol_ratio = today_vol / avg_vol if avg_vol > 0 else 1.0
+    # Today's volume vs the average of completed sessions. The split keeps the
+    # current session out of its own baseline; compose_briefing.py pro-rates
+    # the ratio for how far into the session the briefing runs.
+    today_vol, prior_vols = session_volumes(meta, timestamps, volumes)
+    avg_vol = sum(prior_vols) / len(prior_vols) if prior_vols else 0
+    # Before the session's first print there is no ratio to report. Leave it
+    # unset rather than sending 0.0x, which reads as a volume collapse; the
+    # composer skips its volume narrative when the ratio is absent.
+    vol_ratio = today_vol / avg_vol if (today_vol > 0 and avg_vol > 0) else None
 
     # 52-week range from meta
     hi52 = meta.get('fiftyTwoWeekHigh')
@@ -58,7 +62,8 @@ try:
 
     # Build summary line
     parts = [f'STRC (Strategy Inc.): ${price:.2f} {arrow} {pct:+.2f}%']
-    parts.append(f'Vol: {fmt_vol(today_vol)} ({vol_ratio:.1f}x avg)')
+    if vol_ratio is not None:
+        parts.append(f'Vol: {fmt_vol(today_vol)} ({vol_ratio:.1f}x avg)')
 
     if hi52 and lo52:
         # Drawdown from the 52w high, not position within the range: it is an
@@ -74,9 +79,9 @@ try:
     print(f'strc_price={price}')
     print(f'strc_pct={pct}')
     print(f'strc_arrow={arrow}')
-    print(f'strc_vol={today_vol}')
+    print(f'strc_vol={today_vol or ""}')
     print(f'strc_avg_vol={avg_vol}')
-    print(f'strc_vol_ratio={vol_ratio}')
+    print(f'strc_vol_ratio={vol_ratio if vol_ratio is not None else ""}')
     if hi52: print(f'strc_hi52={hi52}')
     if lo52: print(f'strc_lo52={lo52}')
 

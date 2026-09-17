@@ -3,13 +3,15 @@
 # Pulls major indexes, DXY, commodities and US 10yr yield from Yahoo Finance
 
 set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UA="Mozilla/5.0"
 BASE="https://query1.finance.yahoo.com/v8/finance/chart"
 
 fetch() {
   local ticker=$1
-  python3 - "$ticker" <<'PY'
-import sys, json, urllib.request, math
+  PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" python3 - "$ticker" <<'PY'
+import sys, json, urllib.request
+from yahoo_session import prior_close
 label_map = {
   '%5EGSPC': 'S&P 500',
   '%5EIXIC': 'Nasdaq',
@@ -35,14 +37,11 @@ try:
 
     price = m.get('regularMarketPrice')
     closes = quote.get('close') or []
-    clean_closes = [x for x in closes if isinstance(x, (int, float)) and math.isfinite(x)]
 
-    prev = None
-    if len(clean_closes) >= 2:
-        prev = clean_closes[-2]
-    elif m.get('chartPreviousClose') not in (None, 0):
+    prev = prior_close(m, result.get('timestamp') or [], closes)
+    if prev in (None, 0):
         prev = m.get('chartPreviousClose')
-    elif m.get('previousClose') not in (None, 0):
+    if prev in (None, 0):
         prev = m.get('previousClose')
 
     if price in (None, 0) or prev in (None, 0):

@@ -2,13 +2,17 @@
 # Portfolio snapshot for Morning Intel Briefing
 # Watchlist grouped into tiers (conviction, thematic leverage, optionality,
 # diversifiers); edit the PORTFOLIO dict below to change tickers or tiers.
-# Pulls price + prior close from Yahoo Finance using clean_closes[-2] to
-# avoid the stale previousClose artifact that appears after long weekends.
+# Pulls price + prior close from Yahoo Finance; yahoo_session.prior_close
+# anchors the baseline on the session date, so long weekends and the current
+# session's own bar (whose close is null until the first print) can't shift the
+# comparison day.
 
 set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-python3 - <<'PY'
-import json, urllib.request, math, time
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+import json, urllib.request, time
+from yahoo_session import prior_close
 
 PORTFOLIO = {
     "Core (High Conviction)": ["COIN", "CRCL", "HOOD", "NVDA"],
@@ -31,10 +35,10 @@ def fetch(ticker):
         result = d['chart']['result'][0]
         meta = result['meta']
         closes = result['indicators']['quote'][0].get('close', [])
-        clean = [x for x in closes if isinstance(x, (int, float)) and math.isfinite(x)]
+        timestamps = result.get('timestamp', [])
 
         price = meta.get('regularMarketPrice')
-        prev = clean[-2] if len(clean) >= 2 else None
+        prev = prior_close(meta, timestamps, closes) or meta.get('previousClose')
 
         if price is None or prev is None:
             return None
