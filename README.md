@@ -193,7 +193,30 @@ clear error if the file is missing.
 
 # Force a re-send after today's brief already went out
 ~/.openclaw/workspace-briefing/scripts/briefing_parent.sh --force
+
+# Preview: run collectors, composer and HTML render, print the brief, send nothing
+~/.openclaw/workspace-briefing/scripts/briefing_parent.sh --dry-run
 ```
+
+`--dry-run` is the way to check a pipeline change without waiting for the
+06:00 HST run. It exercises every stage up to delivery and then stops, so it
+cannot send, cannot write the sent-marker that would suppress the real run, and
+cannot take the lock the real run needs. Collectors run against a copy of
+`state/` rather than the directory itself: several of them keep the baselines
+their day-over-day figures are measured against (spot metal prices, fail2ban
+and memory counters), and a dry run that overwrote those would leave the next
+real brief comparing against the dry run instead of against yesterday. The two
+caches that live outside `state/` — `disk_smart.py`'s device-identity cache and
+`powerwall_snapshot.sh`'s session cookie — are copied and redirected the same
+way. A dry run still makes the same outbound API calls the real run does,
+including the Powerwall login and one LLM completion in the composer, so it is
+read-only rather than inert — and not free.
+
+Expect freshness warnings that a 06:00 run does not produce. The SMART snapshot
+is refreshed by its own timer at 05:50, ten minutes ahead of the brief, so an
+afternoon dry run reports it as hours stale. That is the dry run being
+off-schedule, not a fault — check `systemctl list-timers` before reading it as
+one.
 
 ### Privileged SMART snapshot
 

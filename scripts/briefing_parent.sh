@@ -15,6 +15,40 @@ set -euo pipefail
 # delivery. Re-invocations the same day (e.g. OpenClaw LLM-failover
 # re-delivering the cron trigger) exit 0 without re-sending. A flock
 # prevents two instances overlapping mid-run.
+#
+# --dry-run exercises the whole pipeline -- collectors, composer, HTML render --
+# and stops before delivery, so the brief can be checked without waiting for
+# the scheduled run. It sends nothing, writes no sent-marker, takes its own
+# lock, and leaves state/ untouched, so it can never mask or displace a real
+# run. It is read-only, not inert: the collectors still hit their APIs and the
+# composer still spends one LLM completion.
+
+usage() {
+  cat <<'USAGE'
+Usage: briefing_parent.sh [--force] [--dry-run]
+
+  --force     Send again even if today's brief was already delivered.
+  --dry-run   Collect, compose and render, print the brief, then stop before
+              delivery. Sends no email or Signal message, writes no
+              sent-marker, and runs collectors against a throwaway copy of
+              state/ so day-over-day baselines are left intact.
+
+              Not free and not offline: it makes the same outbound calls the
+              real run does, including one LLM completion in the composer.
+USAGE
+}
+
+FORCE=0
+DRY_RUN=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force)   FORCE=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "briefing_parent.sh: unknown option '$1'" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
 
 ROOT="${HOME}/.openclaw/workspace"
 BRIEFING_DIR="${HOME}/.openclaw/workspace-briefing"
@@ -31,6 +65,7 @@ else
   echo "ERROR: missing $BRIEFING_ENV — copy briefing.env.example and fill in values." >&2
   exit 1
 fi
+
 : "${BRIEFING_EMAIL_TO:?BRIEFING_EMAIL_TO not set in $BRIEFING_ENV}"
 : "${BRIEFING_SIGNAL_TARGET:?BRIEFING_SIGNAL_TARGET not set in $BRIEFING_ENV}"
 SCRIPTS="$BRIEFING_DIR/scripts"
@@ -43,7 +78,15 @@ TODAY="$(TZ=Pacific/Honolulu date '+%Y-%m-%d')"
 mkdir -p "$STATE_DIR"
 
 # ── Guard 1: concurrency lock (two instances running simultaneously) ────────
-exec 9>"$STATE_DIR/briefing.lock"
+# A dry run locks a different file, under /run/user rather than state/. Sharing
+# the real lock would let a dry run make the scheduled run exit as "already in
+# progress" and silently skip the day's delivery.
+if [[ "$DRY_RUN" == 1 ]]; then
+  LOCK_FILE="/run/user/$(id -u)/briefing.dry-run.lock"
+else
+  LOCK_FILE="$STATE_DIR/briefing.lock"
+fi
+exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
   echo "Briefing run already in progress — exiting (no action needed)."
   exit 0
@@ -51,14 +94,38 @@ fi
 
 # ── Guard 2: idempotency (already sent today) ───────────────────────────────
 SENT_MARKER="$STATE_DIR/briefing_sent.$TODAY"
-FORCE="${1:-}"
-if [[ -f "$SENT_MARKER" && "$FORCE" != "--force" ]]; then
+if [[ -f "$SENT_MARKER" && "$FORCE" != 1 && "$DRY_RUN" != 1 ]]; then
   echo "Briefing already sent today ($TODAY at $(cat "$SENT_MARKER" 2>/dev/null || echo '?')) — exiting (no action needed)."
   exit 0
 fi
 
 TMPDIR="$(mktemp -d -p /run/user/$(id -u))"
 trap 'rm -rf "$TMPDIR"' EXIT
+
+# Collectors write back into STATE_DIR as well as reading it: market_snapshot.sh
+# keeps the spot metal prices that its day-over-day % is measured against,
+# fail2ban_summary.sh and mem_snapshot.py keep counters. A dry run must not
+# move those baselines, or the next real brief reports deltas against the dry
+# run instead of against yesterday. Copy state/ and point the collectors at the
+# copy: they read true prior values, so the preview stays faithful, and every
+# write lands in $TMPDIR and goes away with it.
+if [[ "$DRY_RUN" == 1 ]]; then
+  cp -a "$STATE_DIR" "$TMPDIR/state"
+  export STATE_DIR="$TMPDIR/state"
+
+  # Two collectors cache outside state/, and both honour an override:
+  # disk_smart.py's device-identity cache and powerwall_snapshot.sh's session
+  # cookie. Copy and redirect those too, on the same read-real/write-throwaway
+  # basis, so a dry run leaves nothing behind anywhere.
+  DRY_DEVICE_CACHE="$TMPDIR/device_config.json"
+  cp -a "${SYS_AGENT_DEVICE_CACHE:-$HOME/.config/sys_agent/device_config.json}" \
+        "$DRY_DEVICE_CACHE" 2>/dev/null || true
+  export SYS_AGENT_DEVICE_CACHE="$DRY_DEVICE_CACHE"
+
+  DRY_PW_COOKIE="$TMPDIR/pw_cookie"
+  cp -a "${PW_COOKIE:-$HOME/.openclaw/.pw_cookie}" "$DRY_PW_COOKIE" 2>/dev/null || true
+  export PW_COOKIE="$DRY_PW_COOKIE"
+fi
 
 # ── Host-local collectors (no standalone script needed) ─────────────────────
 
@@ -228,7 +295,24 @@ printf '%s\n' "$briefing"
 printf '%s\n' "$briefing" > "$TMPDIR/briefing_plain.txt"
 
 # ── Deliver ──────────────────────────────────────────────────────────────────
+# Rendered before the dry-run exit so a dry run covers render_html.py too --
+# it sits in the delivery path, and a failure there breaks the real send.
 html_briefing="$(python3 "$SCRIPTS/render_html.py" "$TMPDIR/briefing_plain.txt")"
+
+if [[ "$DRY_RUN" == 1 ]]; then
+  cat >&2 <<EOF
+
+── dry run: nothing delivered ──────────────────────────────────────────────
+ would email to : $BRIEFING_EMAIL_TO
+ subject        : Morning Intel Brief — $DATE_HST
+ would Signal to: $BRIEFING_SIGNAL_TARGET
+ html rendered  : ${#html_briefing} bytes
+ sent-marker    : not written ($SENT_MARKER)
+ state/         : untouched (collectors ran against a copy)
+ caches         : untouched (device-identity cache, Powerwall cookie copied)
+EOF
+  exit 0
+fi
 
 # Note: literal — used in Subject — printf does not interpret \u Unicode escapes
 printf "MIME-Version: 1.0\nContent-Type: text/html; charset=UTF-8\nSubject: Morning Intel Brief — %s\nTo: %s\nFrom: pi-briefing@localhost\n\n%s" "$DATE_HST" "$BRIEFING_EMAIL_TO" "$html_briefing" | msmtp "$BRIEFING_EMAIL_TO"
