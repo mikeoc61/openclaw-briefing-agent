@@ -427,6 +427,10 @@ def format_disk_smart(raw):
             line = f"{model}: {status}"
             if attrs:
                 line += " | " + " | ".join(attrs)
+            # Explained observations (e.g. a bridged drive logging an unsafe
+            # shutdown on every reboot) stay visible without raising a WARN.
+            for note in verdict.get('notes', [])[:1]:
+                line += f"\n    note: {note}"
             parts.append(line)
         elif v == 'CRITICAL':
             reason_str = "; ".join(reasons[:2]) if reasons else v

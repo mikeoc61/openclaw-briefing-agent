@@ -101,6 +101,19 @@ KNOWN_BRIDGE_HINTS = {
 # pointless `sat` probe (SAT is ATA-only and will never work).
 NVME_BRIDGE_VENDORS = {"04e8"}
 
+# Transports and smartctl -d tokens that mean "NVMe behind a USB bridge".
+# This distinction drives unsafe_shutdowns interpretation: on a bridged
+# device the kernel speaks UAS/SCSI to the bridge and never NVMe, so nothing
+# in the Linux shutdown path issues an NVMe shutdown notification (CC.SHN)
+# to the controller behind it. Whether one is sent is bridge firmware's
+# business, and many bridges never do -- so VBUS dropping during an orderly
+# reboot still increments the counter. See classify_unsafe_shutdowns().
+BRIDGED_TRANSPORTS = {"usb", "ieee1394", "firewire"}
+BRIDGED_DEVICE_TYPES = {"sat", "scsi", "sntasmedia", "sntjmicron"}
+
+# Kernel boot UUID; changes on every boot. Absent on non-Linux.
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+
 # Device-node basename prefixes that do not implement ATA or NVMe SMART.
 NO_SMART_PREFIXES = ("mmcblk", "loop", "ram", "zram", "md", "dm-", "sr")
 
@@ -663,6 +676,95 @@ def _verdict_escalate(current: str, new: str) -> str:
     return current if rank[current] >= rank[new] else new
 
 
+def _read_boot_id() -> Optional[str]:
+    """Current kernel boot UUID, or None where /proc is unavailable."""
+    try:
+        return BOOT_ID_PATH.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _is_bridged(smart_summary: dict) -> bool:
+    """True when the drive sits behind a USB/1394 bridge rather than on a
+    native NVMe/SATA port. Transport is authoritative when known; the
+    privileged snapshot hardcodes device_type="nvme" for bridged NVMe, so
+    the -d token is only a fallback for the direct-probe path."""
+    transport = (smart_summary.get("transport") or "").lower()
+    if transport:
+        return transport in BRIDGED_TRANSPORTS
+    return (smart_summary.get("device_type") or "").lower() in BRIDGED_DEVICE_TYPES
+
+
+def classify_unsafe_shutdowns(
+    delta: int,
+    power_cycle_delta: Optional[int],
+    bridged: bool,
+    rebooted: Optional[bool],
+) -> tuple[Optional[str], str]:
+    """Decide what an unsafe_shutdowns increase actually means.
+
+    Returns (level, reason); level None means "note it, do not raise a
+    verdict". The NVMe counter records that the controller lost power
+    without logging a shutdown notification -- NOT that the OS lost power.
+    Power cycles are the denominator that separates the readings:
+
+      * more unsafe shutdowns than power cycles -> losses the host cannot
+        account for. Unexplained, so warn.
+      * every unsafe shutdown matched by a power cycle, no intervening host
+        reboot -> the drive power-cycled while the host stayed up. A
+        marginal cable or supply dropping a mounted volume; warn loudly.
+      * matched across a host reboot, bridged device -> the bridge dropped
+        VBUS without passing a shutdown notification down. Expected for
+        this hardware; note it.
+      * matched across a host reboot, directly attached -> a native
+        controller should log a clean shutdown. Still anomalous; warn.
+
+    A matched count across a reboot cannot prove *every* increment was a
+    reboot (a cable glitch in the same window looks identical), so the note
+    reports both numbers rather than declaring the drive healthy.
+    """
+    if power_cycle_delta is None:
+        return (
+            "WARN",
+            f"unsafe_shutdowns increased by {delta} since last sweep "
+            "(cause unclassified: no prior power_cycles reading)",
+        )
+    if delta > power_cycle_delta:
+        return (
+            "WARN",
+            f"unsafe_shutdowns +{delta} exceeds power_cycles "
+            f"+{power_cycle_delta} since last sweep: power losses the host "
+            "cannot account for",
+        )
+    if rebooted is False:
+        return (
+            "WARN",
+            f"unsafe_shutdowns +{delta} (power_cycles +{power_cycle_delta}) "
+            "with no host reboot: drive lost power while mounted; check "
+            "cable and supply",
+        )
+    if rebooted is None:
+        return (
+            "WARN",
+            f"unsafe_shutdowns +{delta} matched by power_cycles "
+            f"+{power_cycle_delta}, but boot history is unavailable, so an "
+            "unexpected power loss is not ruled out",
+        )
+    if not bridged:
+        return (
+            "WARN",
+            f"unsafe_shutdowns +{delta} across a host reboot on a directly "
+            "attached device, which should log a clean shutdown",
+        )
+    return (
+        None,
+        f"unsafe_shutdowns +{delta} matched by power_cycles "
+        f"+{power_cycle_delta} across a host reboot; this bridged device "
+        "records no NVMe shutdown notification on reboot, so this is not "
+        "evidence of unexpected power loss",
+    )
+
+
 def health_verdict(
     smart_summary: dict,
     serial: Optional[str] = None,
@@ -675,11 +777,17 @@ def health_verdict(
       verdict  - worst level across all checks
       reasons  - human-readable strings, one per triggered check
       deltas   - changes vs the prior sweep (history-cache backed)
+      notes    - explained, non-actionable observations; no verdict impact
 
     Delta tracking compares against the last snapshot stored per serial.
     unsafe_shutdowns / media_errors / num_err_log_entries are evaluated by
     *rate of change*, not absolute value, since they accumulate over drive
     life. Pass track_history=False for a stateless evaluation.
+
+    power_cycles and the kernel boot id are snapshotted alongside them so an
+    unsafe_shutdowns increase can be attributed -- a bridged drive logs one
+    on every orderly reboot, which is not the same event as losing power
+    while mounted. See classify_unsafe_shutdowns().
     """
     th = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     out: dict = {
@@ -688,6 +796,7 @@ def health_verdict(
         "verdict": "OK",
         "reasons": [],
         "deltas": {},
+        "notes": [],
     }
 
     if not smart_summary.get("ok"):
@@ -736,6 +845,26 @@ def health_verdict(
         if temp is not None and temp >= th["temp_warn_c"]:
             bump("WARN", f"temperature {temp}C at/above {th['temp_warn_c']}C")
 
+        # power_cycles and boot_id exist in the snapshot purely to interpret
+        # an unsafe_shutdowns increase; neither raises a verdict on its own.
+        pc_delta = None
+        pc_cur = smart_summary.get("power_cycles")
+        if pc_cur is not None:
+            snapshot["power_cycles"] = pc_cur
+            pc_prior = prior.get("power_cycles")
+            if isinstance(pc_cur, int) and isinstance(pc_prior, int):
+                pc_delta = pc_cur - pc_prior
+                if pc_delta < 0:
+                    pc_delta = None  # serial reuse or bogus input; unusable
+                else:
+                    out["deltas"]["power_cycles"] = pc_delta
+
+        cur_boot = _read_boot_id()
+        if cur_boot:
+            snapshot["boot_id"] = cur_boot
+        prior_boot = prior.get("boot_id")
+        rebooted = (cur_boot != prior_boot) if (cur_boot and prior_boot) else None
+
         for fld in ("unsafe_shutdowns", "media_errors", "num_err_log_entries"):
             cur = smart_summary.get(fld)
             snapshot[fld] = cur
@@ -746,11 +875,16 @@ def health_verdict(
                     if fld in ("media_errors", "num_err_log_entries"):
                         bump("WARN", f"{fld} increased by {delta} since last sweep")
                     elif fld == "unsafe_shutdowns":
-                        bump(
-                            "WARN",
-                            f"unsafe_shutdowns increased by {delta} since last "
-                            "sweep (unclean power loss)",
+                        level, reason = classify_unsafe_shutdowns(
+                            delta,
+                            pc_delta,
+                            _is_bridged(smart_summary),
+                            rebooted,
                         )
+                        if level:
+                            bump(level, reason)
+                        else:
+                            out["notes"].append(reason)
 
     elif smart_summary.get("kind") == "ata":
         for fld, level in (
@@ -899,6 +1033,9 @@ def _collect_from_snapshot() -> tuple[Optional[dict], Optional[str]]:
         }
         summ = dict(disk["summary"])
         summ["device"] = device
+        # The collector records transport on the disk entry, not the summary;
+        # the verdict needs it to tell a bridged drive from a native one.
+        summ.setdefault("transport", disk.get("transport"))
         smart_ok = bool(summ.get("ok"))
         smart = {
             "device": device,
@@ -951,6 +1088,7 @@ def collect(include_summary: bool = True, include_verdict: bool = True) -> dict:
         entry: dict = {"info": asdict(info), "smart": asdict(smart)}
         if include_summary or include_verdict:
             summ = summary(smart)
+            summ.setdefault("transport", info.transport)
             if include_summary:
                 entry["summary"] = summ
             if include_verdict:
