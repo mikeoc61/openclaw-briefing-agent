@@ -4,7 +4,11 @@
 Coordinates come from ~/.openclaw/briefing.env (HOME_LAT/HOME_LON/HOME_ELEV_M)
 — kept out of the public repo. See briefing.env.example.
 """
-import json, urllib.request, datetime, zoneinfo
+import datetime
+import json
+import subprocess
+import urllib.request
+import zoneinfo
 import local_config
 
 LAT = local_config.get('HOME_LAT')
@@ -23,6 +27,45 @@ WMO = {
     95: 'Thunderstorm', 96: 'Thunderstorm/hail', 99: 'Thunderstorm/hail',
 }
 
+
+def fetch_json(url):
+    """Fetch Open-Meteo JSON, falling back to curl for TLS-path failures.
+
+    urllib occasionally times out during the TLS handshake on the Pi even when
+    the endpoint is healthy.  curl uses a different TLS/network stack and has
+    proven reliable from the same host, so use it as a bounded fallback rather
+    than dropping the weather section after one failed handshake.
+    """
+    req = urllib.request.Request(url, headers={'User-Agent': 'OpenClaw-Briefing/1.0'})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return json.load(response)
+    except Exception as urllib_error:
+        try:
+            result = subprocess.run(
+                [
+                    'curl', '--fail', '--silent', '--show-error', '--location',
+                    '--retry', '2', '--retry-delay', '1', '--retry-all-errors',
+                    '--retry-max-time', '35', '--connect-timeout', '10',
+                    '--max-time', '20', url,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=40,
+            )
+            return json.loads(result.stdout)
+        except Exception as curl_error:
+            urllib_detail = getattr(urllib_error, 'reason', urllib_error)
+            if isinstance(curl_error, subprocess.CalledProcessError):
+                curl_detail = (curl_error.stderr or '').strip() or f'exit {curl_error.returncode}'
+            else:
+                curl_detail = str(curl_error)
+            raise RuntimeError(
+                f'Open-Meteo fetch failed via urllib ({urllib_detail}); '
+                f'curl fallback failed ({curl_detail})'
+            ) from curl_error
+
 try:
     tz = zoneinfo.ZoneInfo('Pacific/Honolulu')
     now = datetime.datetime.now(tz)
@@ -36,9 +79,7 @@ try:
         f'&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch'
         f'&timezone=Pacific%2FHonolulu&forecast_days=2'
     )
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        data = json.load(r)
+    data = fetch_json(url)
 
     daily = data.get('daily', {})
     hourly = data.get('hourly', {})
