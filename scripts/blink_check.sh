@@ -30,6 +30,13 @@ if [[ -r "$HA_URL_FILE" ]]; then
 fi
 
 #-----------------
+# Not every camera reports every check. Checked against Home Assistant 2026-11-25:
+#   lr_cam      Blink Mini on USB power: its battery sensor means nothing, and its
+#               temperature and Wi-Fi sensors stay "unknown". Left out on purpose.
+#   front_door  Blink doorbell: battery is real, but its temperature and Wi-Fi
+#               sensors exist without ever being filled and read "unknown". The
+#               numeric checks below skip non-numbers, so it gets a battery check
+#               only, with no alert for the two blank readings.
 CAMERAS=(driveway front_door makai north_lanai south_lanai)
 TEMP_THRESHOLD=110   # °F
 RSSI_THRESHOLD=-75   # dBm
