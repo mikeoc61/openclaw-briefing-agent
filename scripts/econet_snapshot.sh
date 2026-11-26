@@ -1,65 +1,110 @@
 #!/usr/bin/env bash
 # EcoNet Heat Pump Water Heater snapshot for Morning Intel Brief
 # Reads Home Assistant token from a local-only file outside the mirrored workspace.
-# Uses same HA_TOKEN infrastructure as powerwall_snapshot.sh
+# Uses the same HA_TOKEN infrastructure as powerwall_snapshot.sh and blink_check.sh.
 
-set -euo pipefail
+# No -e, matching powerwall_snapshot.sh: a failed step should still print an
+# "unavailable" line for the composer instead of aborting with no output.
+# Every fallible step below is checked explicitly.
+set -uo pipefail
 
 TOKEN_FILE="${HOME}/.openclaw/powerwall.token"
 HA_URL_FILE="${HOME}/.config/openclaw/homeassistant.url"
 DEFAULT_HA_URL="http://localhost:8123"
+HA_MAX_TIME="${HA_MAX_TIME:-15}"
 
-if [[ ! -r "$TOKEN_FILE" ]]; then
-  echo "Heat Pump: unavailable (missing token file: $TOKEN_FILE)"
+bail() {
+  echo "Heat Pump Water Heater: unavailable ($1)"
   exit 0
-fi
-
-HA_TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")"
-HA_URL="$DEFAULT_HA_URL"
-if [[ -r "$HA_URL_FILE" ]]; then
-  HA_URL="$(tr -d '\r\n' < "$HA_URL_FILE")"
-fi
-
-get_state() {
-  local entity_id="$1"
-  curl -fsS \
-    -H "Authorization: Bearer ${HA_TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${HA_URL}/api/states/${entity_id}" \
-    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['state'])" 2>/dev/null || echo "unavailable"
 }
 
-mode=$(get_state water_heater.heat_pump_water_heater)
-running=$(get_state binary_sensor.heat_pump_water_heater_running)
-running_state=$(get_state sensor.heat_pump_water_heater_running_state)
-available_hot=$(get_state sensor.heat_pump_water_heater_available_hot_water)
-power_today=$(get_state sensor.heat_pump_water_heater_power_usage_today)
-compressor_health=$(get_state sensor.heat_pump_water_heater_compressor_health)
-tank_health=$(get_state sensor.heat_pump_water_heater_tank_health)
-alert_count=$(get_state sensor.heat_pump_water_heater_alert_count)
+[[ -r "$TOKEN_FILE" ]] || bail "missing token file: $TOKEN_FILE"
 
-python3 - "$mode" "$running" "$running_state" "$available_hot" "$power_today" "$compressor_health" "$tank_health" "$alert_count" <<'PY'
+HA_TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")" || bail "cannot read $TOKEN_FILE"
+# A readable but empty token file otherwise yields a 401 and a dashed-out
+# summary with nothing pointing at the cause.
+[[ -n "$HA_TOKEN" ]] || bail "empty token file: $TOKEN_FILE"
+
+HA_URL="$DEFAULT_HA_URL"
+if [[ -r "$HA_URL_FILE" ]]; then
+  ha_url_override="$(tr -d '\r\n' < "$HA_URL_FILE")"
+  [[ -n "$ha_url_override" ]] && HA_URL="$ha_url_override"
+fi
+
+# One request for every entity; the eight lookups then happen locally. The
+# per-entity form meant eight round trips and sixteen processes, and
+# briefing_parent.sh waits on collectors with a bare `wait`, so a request
+# that hangs holds up the whole briefing. --max-time bounds that.
+if ! STATES="$(curl -fsS --max-time "$HA_MAX_TIME" \
+    -H "Authorization: Bearer ${HA_TOKEN}" \
+    "${HA_URL}/api/states" 2>/dev/null)"; then
+  bail "no response from Home Assistant at ${HA_URL}"
+fi
+
+# Held in a variable so the JSON can arrive on stdin.
+PYCODE="$(cat <<'PY'
+import json
+import re
 import sys
-mode, running, running_state, available_hot, power_today, compressor_health, tank_health, alert_count = sys.argv[1:9]
 
-def clean(val, default="—"):
-    return val.strip() if val.strip() not in ("", "unavailable", "unknown") else default
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(doc, list):
+    sys.exit(1)
 
-mode          = clean(mode, "unknown")
-running       = clean(running, "—")
-running_state = clean(running_state, "")
-available_hot = clean(available_hot, "—")
-power_today   = clean(power_today, "—")
-compressor    = clean(compressor_health, "—")
-tank          = clean(tank_health, "—")
-alerts        = clean(alert_count, "0")
+states = {}
+for item in doc:
+    if isinstance(item, dict):
+        entity = item.get("entity_id")
+        if isinstance(entity, str):
+            states[entity] = item.get("state")
+
+MISSING = ("", "unavailable", "unknown")
+found = []
+
+
+def get(entity, default="—"):
+    """State of entity, or default when absent, null or not yet known."""
+    val = states.get(entity)
+    if not isinstance(val, str) or val.strip().lower() in MISSING:
+        found.append(False)
+        return default
+    found.append(True)
+    return val.strip()
+
+
+NUMERIC = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
+
+
+def with_unit(val, unit):
+    """Append a unit only to a number, so '—' does not become '—%'."""
+    return f"{val}{unit}" if NUMERIC.match(val) else val
+
+
+SENSOR = "sensor.heat_pump_water_heater_"
+mode          = get("water_heater.heat_pump_water_heater", "unknown")
+running       = get("binary_sensor.heat_pump_water_heater_running")
+running_state = get(SENSOR + "running_state", "")
+available_hot = get(SENSOR + "available_hot_water")
+power_today   = get(SENSOR + "power_usage_today")
+compressor    = get(SENSOR + "compressor_health")
+tank          = get(SENSOR + "tank_health")
+alerts        = get(SENSOR + "alert_count", "0")
+
+# Home Assistant answered but knows none of these entities: the integration
+# is down, which is a different fault from an unreachable Home Assistant.
+if not any(found):
+    print("Heat Pump Water Heater: unavailable (no water heater entities in Home Assistant)")
+    sys.exit(0)
 
 # Running state: only include if non-empty
 running_part = f" ({running_state})" if running_state else ""
 
 # Alert handling: warn prominently when alerts are active
 try:
-    alert_int = int(alerts)
+    alert_int = int(float(alerts))
 except ValueError:
     alert_int = 0
 
@@ -71,11 +116,19 @@ else:
 summary = (
     f"Heat Pump Water Heater: Mode {mode}, "
     f"running {running}{running_part}, "
-    f"{available_hot}% hot water available. "
-    f"Power today: {power_today} kWh. "
-    f"Health: compressor {compressor}%, tank {tank}%."
+    f"{with_unit(available_hot, '%')} hot water available. "
+    f"Power today: {with_unit(power_today, ' kWh')}. "
+    f"Health: compressor {with_unit(compressor, '%')}, tank {with_unit(tank, '%')}."
     f"{alert_note}"
 )
 
 print(summary)
 PY
+)"
+
+if ! summary="$(printf '%s' "$STATES" | python3 -c "$PYCODE" 2>/dev/null)" \
+   || [[ -z "$summary" ]]; then
+  bail "unreadable states response from ${HA_URL}"
+fi
+
+printf '%s\n' "$summary"
