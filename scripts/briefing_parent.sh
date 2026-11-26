@@ -206,15 +206,63 @@ bitcoin_node() {
 }
 
 # ── Parallel collection ──────────────────────────────────────────────────────
+# Every collector runs under a time limit. The composer starts only after a
+# bare `wait` on all of them, so without one a single collector that never
+# returns -- a hung socket, a wedged bitcoind, npm retrying the registry --
+# holds back the whole brief, and the day's email never goes out.
+#
+# This is a backstop, not the collectors' own timeouts: each network call
+# should still bound itself. The default sits above the slowest legitimate
+# worst case, market_snapshot.sh at ~280s when every Yahoo and metals call
+# runs into its own 20s timeout, so it only ever cuts off a collector that
+# would otherwise have run on for much longer.
+COLLECTOR_TIMEOUT="${BRIEFING_COLLECTOR_TIMEOUT:-300}"
+# gateway_details reads SCRIPTS, and under the limit the host-local functions
+# run in a fresh bash (see bounded), which sees only exported variables.
+export SCRIPTS
+
+# bounded <command...>
+#   Runs the command under timeout(1). timeout gives the command its own
+#   process group and signals the whole group, so grandchildren (curl, npm,
+#   bitcoin-cli) stop too instead of running on as orphans. timeout runs
+#   programs, not shell functions, so a function is passed to a fresh bash
+#   through export -f; -u makes a variable it needs but cannot see fail
+#   loudly into the fallback rather than expand to nothing. stdin is
+#   /dev/null: in its own process group a collector reading a terminal would
+#   stop on SIGTTIN and sit there until the limit.
+bounded() {
+  if declare -F "$1" >/dev/null; then
+    export -f "$1"
+    set -- bash -uo pipefail -c '"$@"' _ "$@"
+  fi
+  timeout -k 10 "$COLLECTOR_TIMEOUT" "$@" </dev/null
+}
+
+# timed_out <name> <exit-status>
+#   timeout exits 124 when the limit hits and 137 when it had to follow up
+#   with SIGKILL. Logged on the parent's stderr, never in the brief, so a
+#   section that keeps coming back as its fallback can be told apart from one
+#   that is failing on its own.
+timed_out() {
+  if (( $2 == 124 || $2 == 137 )); then
+    echo "briefing_parent: collector '$1' timed out after ${COLLECTOR_TIMEOUT}s; using its fallback" >&2
+    return 0
+  fi
+  return 1
+}
+
 # run <name> <fallback-text> <command...>
 #   Backgrounds the command, writing stdout to $TMPDIR/<name>.txt.
-#   On failure or empty output, writes the fallback text instead so the
-#   composer always has a file to read. Never propagates failure (set -e safe).
+#   On failure, timeout or empty output, writes the fallback text instead so
+#   the composer always has a file to read. Never propagates failure (set -e safe).
 run() {
   local name="$1" fallback="$2"
   shift 2
   {
-    if ! "$@" > "$TMPDIR/$name.txt" 2>/dev/null || [[ ! -s "$TMPDIR/$name.txt" ]]; then
+    local rc=0
+    bounded "$@" > "$TMPDIR/$name.txt" 2>/dev/null || rc=$?
+    timed_out "$name" "$rc" || true
+    if (( rc != 0 )) || [[ ! -s "$TMPDIR/$name.txt" ]]; then
       printf '%s\n' "$fallback" > "$TMPDIR/$name.txt"
     fi
   } &
@@ -222,13 +270,18 @@ run() {
 
 # run_stderr <name> <fallback> <command...>
 #   Same as run(), but captures stderr into the output file too — for
-#   collectors that report via stderr (e.g. blink_check.sh).
+#   collectors that report via stderr (e.g. blink_check.sh). On an ordinary
+#   failure the output is kept if there is any, since it may be the report.
+#   On a timeout it is replaced: whatever was written before the cutoff is
+#   an unfinished report.
 run_stderr() {
   local name="$1" fallback="$2"
   shift 2
   {
-    if ! "$@" > "$TMPDIR/$name.txt" 2>&1 || [[ ! -s "$TMPDIR/$name.txt" ]]; then
-      [[ -s "$TMPDIR/$name.txt" ]] || printf '%s\n' "$fallback" > "$TMPDIR/$name.txt"
+    local rc=0
+    bounded "$@" > "$TMPDIR/$name.txt" 2>&1 || rc=$?
+    if timed_out "$name" "$rc" || [[ ! -s "$TMPDIR/$name.txt" ]]; then
+      printf '%s\n' "$fallback" > "$TMPDIR/$name.txt"
     fi
   } &
 }
