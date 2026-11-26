@@ -20,6 +20,16 @@ AUTH_PATH = Path(
     local_config.get("CALDAV_CREDS", "~/.openclaw/credentials/icloud.json")
 ).expanduser()
 CALDAV_URL = "https://caldav.icloud.com"
+# caldav's DAVClient defaults to timeout=None, which requests treats as "wait
+# forever". briefing_parent.sh waits on every collector with a bare `wait`, so
+# an iCloud that accepts the connection and never answers would stop the whole
+# briefing. requests applies this per connect and per read, not to the total.
+# Before authentication is established, caldav retries any failed request as a
+# plain GET (its workaround for python-caldav issue #158), so a server that
+# never answers costs two timeouts (40s) before main() reports the error. Once
+# authenticated, each later request (calendar list, then one per included
+# calendar) is bounded by one timeout and fails into the error paths below.
+CALDAV_TIMEOUT_S = 20
 TZ = ZoneInfo("Pacific/Honolulu")
 
 # Calendar names are personal — configured in ~/.openclaw/briefing.env
@@ -54,7 +64,10 @@ def iso(dt):
 
 def fetch_events():
     username, password = load_creds()
-    client = caldav.DAVClient(url=CALDAV_URL, username=username, password=password)
+    client = caldav.DAVClient(
+        url=CALDAV_URL, username=username, password=password,
+        timeout=CALDAV_TIMEOUT_S,
+    )
     principal = client.principal()
     window_start, window_end = window_hst()
     out = []
